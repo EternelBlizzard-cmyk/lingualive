@@ -35,7 +35,9 @@ app.use(express.static(path.join(__dirname, "public")));
 // Sans ACCESS_CODE dans l'environnement, tout passe (usage purement local).
 const ACCESS_CODE = (process.env.ACCESS_CODE || "").trim();
 app.use("/api", (req, res, next) => {
-  if (!ACCESS_CODE || req.get("x-access-code") === ACCESS_CODE) return next();
+  // Sur le PC lui-même (localhost), pas de code : seul l'accès via Internet (tunnel/hébergement) est protégé
+  const local = ["localhost", "127.0.0.1", "::1"].includes(req.hostname);
+  if (!ACCESS_CODE || local || req.get("x-access-code") === ACCESS_CODE) return next();
   res.status(401).json({ error: "Code d'accès requis.", codeRequired: true });
 });
 
