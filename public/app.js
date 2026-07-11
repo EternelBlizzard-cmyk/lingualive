@@ -79,34 +79,34 @@ const SCENARIOS = [
 // Interlocuteurs : chacun a un accent (voix TTS correspondante si disponible) et une origine
 const PERSONAS = {
   daily: [
-    { name: "Emma", flag: "🇬🇧", origin: "London, UK", lang: "en-GB" },
-    { name: "Jake", flag: "🇺🇸", origin: "New York, USA", lang: "en-US" },
-    { name: "Liam", flag: "🇦🇺", origin: "Sydney, Australia", lang: "en-AU" },
+    { name: "Emma", flag: "🇬🇧", origin: "London, UK", lang: "en-GB", ttsVoice: "en-GB-SoniaNeural" },
+    { name: "Jake", flag: "🇺🇸", origin: "New York, USA", lang: "en-US", ttsVoice: "en-US-GuyNeural" },
+    { name: "Liam", flag: "🇦🇺", origin: "Sydney, Australia", lang: "en-AU", ttsVoice: "en-AU-WilliamNeural" },
   ],
   business: [
-    { name: "Sarah", flag: "🇺🇸", origin: "San Francisco, USA", lang: "en-US" },
-    { name: "Oliver", flag: "🇬🇧", origin: "Manchester, UK", lang: "en-GB" },
-    { name: "Priya", flag: "🇮🇳", origin: "Mumbai, India", lang: "en-IN" },
+    { name: "Sarah", flag: "🇺🇸", origin: "San Francisco, USA", lang: "en-US", ttsVoice: "en-US-JennyNeural" },
+    { name: "Oliver", flag: "🇬🇧", origin: "Manchester, UK", lang: "en-GB", ttsVoice: "en-GB-RyanNeural" },
+    { name: "Priya", flag: "🇮🇳", origin: "Mumbai, India", lang: "en-IN", ttsVoice: "en-IN-NeerjaNeural" },
   ],
   interview: [
-    { name: "Rachel", flag: "🇺🇸", origin: "Chicago, USA", lang: "en-US" },
-    { name: "James", flag: "🇬🇧", origin: "London, UK", lang: "en-GB" },
-    { name: "Aisha", flag: "🇿🇦", origin: "Cape Town, South Africa", lang: "en-ZA" },
+    { name: "Rachel", flag: "🇺🇸", origin: "Chicago, USA", lang: "en-US", ttsVoice: "en-US-AriaNeural" },
+    { name: "James", flag: "🇬🇧", origin: "London, UK", lang: "en-GB", ttsVoice: "en-GB-ThomasNeural" },
+    { name: "Aisha", flag: "🇿🇦", origin: "Cape Town, South Africa", lang: "en-ZA", ttsVoice: "en-ZA-LeahNeural" },
   ],
   appointment: [
-    { name: "Grace", flag: "🇬🇧", origin: "Edinburgh, UK", lang: "en-GB" },
-    { name: "Carlos", flag: "🇺🇸", origin: "Miami, USA", lang: "en-US" },
-    { name: "Mei", flag: "🇸🇬", origin: "Singapore", lang: "en-SG" },
+    { name: "Grace", flag: "🇬🇧", origin: "Edinburgh, UK", lang: "en-GB", ttsVoice: "en-GB-LibbyNeural" },
+    { name: "Carlos", flag: "🇺🇸", origin: "Miami, USA", lang: "en-US", ttsVoice: "en-US-ChristopherNeural" },
+    { name: "Mei", flag: "🇸🇬", origin: "Singapore", lang: "en-SG", ttsVoice: "en-SG-LunaNeural" },
   ],
   presentation: [
-    { name: "Michael", flag: "🇺🇸", origin: "Boston, USA", lang: "en-US" },
-    { name: "Charlotte", flag: "🇬🇧", origin: "London, UK", lang: "en-GB" },
-    { name: "Raj", flag: "🇮🇳", origin: "Bangalore, India", lang: "en-IN" },
+    { name: "Michael", flag: "🇺🇸", origin: "Boston, USA", lang: "en-US", ttsVoice: "en-US-EricNeural" },
+    { name: "Charlotte", flag: "🇬🇧", origin: "London, UK", lang: "en-GB", ttsVoice: "en-GB-SoniaNeural" },
+    { name: "Raj", flag: "🇮🇳", origin: "Bangalore, India", lang: "en-IN", ttsVoice: "en-IN-PrabhatNeural" },
   ],
   free: [
-    { name: "Alex", flag: "🇺🇸", origin: "Seattle, USA", lang: "en-US" },
-    { name: "Sophie", flag: "🇬🇧", origin: "Bristol, UK", lang: "en-GB" },
-    { name: "Noah", flag: "🇦🇺", origin: "Melbourne, Australia", lang: "en-AU" },
+    { name: "Alex", flag: "🇺🇸", origin: "Seattle, USA", lang: "en-US", ttsVoice: "en-US-GuyNeural" },
+    { name: "Sophie", flag: "🇬🇧", origin: "Bristol, UK", lang: "en-GB", ttsVoice: "en-GB-LibbyNeural" },
+    { name: "Noah", flag: "🇦🇺", origin: "Melbourne, Australia", lang: "en-AU", ttsVoice: "en-AU-WilliamNeural" },
   ],
 };
 
@@ -198,8 +198,51 @@ function pickVoice() {
 const SPEECH_RATE = { B1: 0.85, B2: 0.95, C1: 1.0, C2: 1.08 };
 
 let resumeTicker = null;
+let currentAudio = null;
 
-function speak(text, onend) {
+function stopAudio() {
+  if (currentAudio) {
+    currentAudio.onended = null;
+    currentAudio.onerror = null;
+    try { currentAudio.pause(); } catch {}
+    currentAudio = null;
+  }
+  speechSynthesis.cancel();
+  clearInterval(resumeTicker);
+}
+
+// Voix neurales Microsoft générées côté serveur : naturelles et fidèles à l'accent
+// de l'interlocuteur, sur tous les navigateurs. Repli : synthèse du navigateur.
+async function speak(text, onend) {
+  stopAudio();
+  try {
+    const voice = (state.inSession && state.persona && store.get("personaAccent", true) && state.persona.ttsVoice)
+      ? state.persona.ttsVoice
+      : "en-US-AriaNeural";
+    const res = await api("/api/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, voice, level: state.level }),
+    });
+    if (!res.ok) throw new Error("tts " + res.status);
+    const blob = await res.blob();
+    if (!blob.size) throw new Error("audio vide");
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    currentAudio = audio;
+    audio.onended = () => {
+      URL.revokeObjectURL(url);
+      if (currentAudio === audio) currentAudio = null;
+      onend && onend();
+    };
+    audio.onerror = () => { URL.revokeObjectURL(url); speakLocal(text, onend); };
+    await audio.play();
+  } catch {
+    speakLocal(text, onend);
+  }
+}
+
+function speakLocal(text, onend) {
   speechSynthesis.cancel();
   clearInterval(resumeTicker);
   if (!voices.length) loadVoices(); // les voix arrivent parfois après le chargement de la page
@@ -311,7 +354,7 @@ function finishUtterance() {
 
 function startListening() {
   if (!recognition || state.busy) return;
-  speechSynthesis.cancel();
+  stopAudio();
   wantListening = true;
   finalBuffer = "";
   pendingAlts = [];
@@ -540,21 +583,27 @@ async function sendTurn(userText, opts = {}) {
   scroll.appendChild(typing);
   scroll.scrollTop = scroll.scrollHeight;
 
+  // Un seul corps de requête, partagé par la réponse rapide et l'analyse.
+  // L'historique est figé AVANT ce tour pour que les deux appels voient la même chose.
+  const payload = JSON.stringify({
+    scenario: { role: state.scenario.role, setting: state.scenario.setting, label: state.scenario.label },
+    persona: state.persona ? { name: state.persona.name, origin: state.persona.origin } : null,
+    level: state.level,
+    mission: state.mission,
+    history: state.history.slice(),
+    userText,
+    alternatives: opts.alternatives || [],
+    knownErrors: state.drillMode ? knownErrorPatterns() : [],
+  });
+  const post = (path) => api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: payload });
+
+  // L'analyse pédagogique part EN PARALLÈLE : elle s'affichera sous ta bulle
+  // dès qu'elle arrive, pendant que l'interlocuteur parle déjà.
+  const historyEntry = { role: "user", text: userText, corrections: [], native: "" };
+  if (!opts.hidden) runCoach(post, userBubble, historyEntry);
+
   try {
-    const res = await api("/api/turn", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        scenario: { role: state.scenario.role, setting: state.scenario.setting, label: state.scenario.label },
-        persona: state.persona ? { name: state.persona.name, origin: state.persona.origin } : null,
-        level: state.level,
-        mission: state.mission,
-        history: state.history,
-        userText,
-        alternatives: opts.alternatives || [],
-        knownErrors: state.drillMode ? knownErrorPatterns() : [],
-      }),
-    });
+    const res = await post("/api/reply");
     const data = await res.json();
     typing.remove();
     if (!res.ok) {
@@ -562,32 +611,10 @@ async function sendTurn(userText, opts = {}) {
       addBubble("ai", "⚠️ " + (data.error || "Erreur serveur"));
       return;
     }
-    const t = data.turn;
-
-    // Annoter le message utilisateur avec les corrections
-    if (userBubble) {
-      addUserAnnotations(userBubble, t);
-      state.corrections.push(...(t.corrections || []));
-    }
-    state.history.push({ role: "user", text: userText, corrections: t.corrections || [], native: t.nativeVersion || "" });
-    state.history.push({ role: "assistant", text: t.reply });
-    if (t.vocab?.length) state.vocabSeen.push(...t.vocab);
-
-    addBubble("ai", t.reply, {});
-
-    if (t.missionStatus === "accomplished" && !state.missionDone) {
-      state.missionDone = true;
-      const mc = document.getElementById("missionChip");
-      mc.classList.add("done");
-      mc.textContent = "✅ Mission accomplie !";
-      const banner = document.createElement("div");
-      banner.className = "mission-banner";
-      banner.textContent = "🎉 Mission accomplie !";
-      scroll.appendChild(banner);
-      scroll.scrollTop = scroll.scrollHeight;
-    }
-
-    speak(t.reply, () => {
+    state.history.push(historyEntry);
+    state.history.push({ role: "assistant", text: data.reply });
+    addBubble("ai", data.reply, {});
+    speak(data.reply, () => {
       if (state.handsFree && state.inSession) startListening();
     });
   } catch (err) {
@@ -596,6 +623,33 @@ async function sendTurn(userText, opts = {}) {
   } finally {
     state.busy = false;
   }
+}
+
+// Reçoit corrections, version native, vocab et statut de mission en arrière-plan
+async function runCoach(post, userBubble, historyEntry) {
+  try {
+    const res = await post("/api/coach");
+    if (!res.ok) return; // l'analyse est optionnelle : la conversation continue sans elle
+    const { coach: t } = await res.json();
+    state.corrections.push(...(t.corrections || []));
+    historyEntry.corrections = t.corrections || [];
+    historyEntry.native = t.nativeVersion || "";
+    if (t.vocab?.length) state.vocabSeen.push(...t.vocab);
+    if (userBubble && userBubble.isConnected) addUserAnnotations(userBubble, t);
+
+    if (t.missionStatus === "accomplished" && !state.missionDone) {
+      state.missionDone = true;
+      const mc = document.getElementById("missionChip");
+      mc.classList.add("done");
+      mc.textContent = "✅ Mission accomplie !";
+      const scroll = document.getElementById("chatScroll");
+      const banner = document.createElement("div");
+      banner.className = "mission-banner";
+      banner.textContent = "🎉 Mission accomplie !";
+      scroll.appendChild(banner);
+      scroll.scrollTop = scroll.scrollHeight;
+    }
+  } catch { /* silencieux : le coaching ne doit jamais bloquer la conversation */ }
 }
 
 function addUserAnnotations(userBubble, turn) {
@@ -634,7 +688,7 @@ document.getElementById("endBtn").addEventListener("click", endSession);
 
 async function endSession() {
   stopListening();
-  speechSynthesis.cancel();
+  stopAudio();
   const userTurns = state.history.filter((m) => m.role === "user").length;
   if (userTurns < 2) {
     if (confirm("Session très courte — quitter sans débrief ?")) {
@@ -1008,7 +1062,7 @@ function openTranscript(session) {
 }
 
 document.getElementById("historyCloseBtn").addEventListener("click", () => {
-  speechSynthesis.cancel();
+  stopAudio();
   document.getElementById("historyModal").hidden = true;
 });
 

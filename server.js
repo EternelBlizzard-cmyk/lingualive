@@ -258,6 +258,153 @@ ${corrList || "(aucune)"}`;
   }
 });
 
+// --- Conversation en 2 temps : réponse rapide (latence minimale) + analyse en parallèle ---
+
+const FAST_MODEL = process.env.LINGUALIVE_FAST_MODEL || "claude-haiku-4-5-20251001";
+
+function replySystemPrompt({ scenario, level, mission, persona }) {
+  return `You are an English conversation partner for a French-speaking learner. Role-play only — no coaching, no corrections, no meta-comments.
+
+You are: ${persona ? `${persona.name}, from ${persona.origin} — ` : ""}${scenario.role}
+Setting: ${scenario.setting}
+${persona ? `Use turns of phrase typical of ${persona.origin} English speakers.` : ""}
+${mission ? `The learner is trying to accomplish: "${mission}". Give them realistic opportunities (including light obstacles).` : ""}
+
+CEFR ${level}: ${LEVEL_GUIDE[level] || LEVEL_GUIDE.B2}
+
+Rules:
+- Stay in character, react to what they said, keep the conversation moving with a question or hook.
+- 1 to 3 short spoken sentences. Plain text only — it is read aloud by text-to-speech.
+- The learner's message may end with a bracketed "[reconnaissance — autres transcriptions possibles: ...]" line: alternative speech-recognition transcriptions of the same words. Use them to understand what was really said; never mention them.
+- Never correct the learner: respond to their intended meaning.`;
+}
+
+app.post("/api/reply", async (req, res) => {
+  const { scenario, level = "B2", mission = "", history = [], userText = "", alternatives = [], persona = null } = req.body || {};
+  if (!scenario || !scenario.role) return res.status(400).json({ error: "Scénario manquant." });
+  if (!userText.trim()) return res.status(400).json({ error: "Message vide." });
+
+  const messages = history
+    .slice(-MAX_HISTORY)
+    .map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.text }));
+  const alts = (Array.isArray(alternatives) ? alternatives : []).filter((a) => a && a.trim()).slice(0, 6);
+  messages.push({
+    role: "user",
+    content: userText.trim() + (alts.length ? `\n[reconnaissance — autres transcriptions possibles: ${alts.join(" | ")}]` : ""),
+  });
+
+  try {
+    const message = await client.messages.create({
+      model: FAST_MODEL,
+      max_tokens: 300,
+      system: replySystemPrompt({ scenario, level, mission, persona }),
+      messages,
+    });
+    const textBlock = message.content.find((b) => b.type === "text");
+    res.json({ reply: (textBlock?.text || "").trim() });
+  } catch (err) {
+    handleApiError(err, res);
+  }
+});
+
+// Analyse pédagogique (corrections, version native, vocab) — mêmes champs que /api/turn sans "reply"
+const COACH_SCHEMA = {
+  type: "object",
+  properties: {
+    corrections: TURN_SCHEMA.properties.corrections,
+    nativeVersion: TURN_SCHEMA.properties.nativeVersion,
+    vocab: TURN_SCHEMA.properties.vocab,
+    coachNote: TURN_SCHEMA.properties.coachNote,
+    missionStatus: TURN_SCHEMA.properties.missionStatus,
+  },
+  required: ["corrections", "nativeVersion", "vocab", "coachNote", "missionStatus"],
+  additionalProperties: false,
+};
+
+app.post("/api/coach", async (req, res) => {
+  const { scenario, level = "B2", mission = "", history = [], userText = "", alternatives = [], knownErrors = [] } = req.body || {};
+  if (!userText.trim()) return res.status(400).json({ error: "Message vide." });
+
+  const transcript = history
+    .slice(-MAX_HISTORY)
+    .map((m) => `${m.role === "assistant" ? "PARTNER" : "LEARNER"}: ${m.text}`)
+    .join("\n");
+  const alts = (Array.isArray(alternatives) ? alternatives : []).filter((a) => a && a.trim()).slice(0, 6);
+
+  const prompt = `Conversation so far (scenario: ${scenario?.label || "free"} — ${scenario?.setting || ""}, level ${level}${mission ? `, learner's mission: "${mission}"` : ""}):
+${transcript || "(start of conversation)"}
+
+LEARNER's new utterance to analyse:
+${userText.trim()}${alts.length ? `\n[speech recognition alternatives for the same words: ${alts.join(" | ")}]` : ""}`;
+
+  const system = `You are an English coach for a French-speaking learner. Analyse ONLY the learner's new utterance.
+- It comes from speech recognition: no punctuation, occasional mis-transcribed homophones. Never correct punctuation/capitalization. Use the bracketed alternatives (the learner typed none of this) and the context to infer what was really said; do not flag transcription artifacts as errors.
+- Report every real error in "corrections" (explanation in French, 1 sentence). No error → empty array. Never invent errors.
+- "nativeVersion": natural native phrasing if their sentence was clunky; empty string if already natural.
+- "vocab": 0-3 genuinely useful words/expressions for this scenario (prefer expressions).
+- "coachNote": short French tip, empty most of the time.
+- "missionStatus": ${mission ? `"accomplished" the moment the mission "${mission}" is clearly achieved in the conversation, else "in_progress"` : `"none"`}.
+${knownErrors && knownErrors.length ? `- Recurring weaknesses to watch: ${knownErrors.join("; ")}.` : ""}`;
+
+  try {
+    const message = await client.messages.create({
+      model: MODEL,
+      max_tokens: 1500,
+      system,
+      output_config: { format: { type: "json_schema", schema: COACH_SCHEMA } },
+      messages: [{ role: "user", content: prompt }],
+    });
+    const textBlock = message.content.find((b) => b.type === "text");
+    res.json({ coach: JSON.parse(textBlock.text) });
+  } catch (err) {
+    handleApiError(err, res);
+  }
+});
+
+// --- Synthèse vocale neurale (voix Microsoft Edge, tous accents) ---
+
+const TTS_RATES = { B1: "-12%", B2: "-4%", C1: "+0%", C2: "+8%" };
+const { MsEdgeTTS, OUTPUT_FORMAT } = require("msedge-tts");
+// Une instance par voix, réutilisée entre les phrases : évite de rouvrir
+// une connexion à chaque réplique (~1 s gagnée)
+const ttsPool = new Map();
+
+async function getTtsStream(voice, text, rate) {
+  let tts = ttsPool.get(voice);
+  if (!tts) {
+    tts = new MsEdgeTTS();
+    await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+    ttsPool.set(voice, tts);
+  }
+  const result = await tts.toStream(text, { rate });
+  return result.audioStream || result;
+}
+
+app.post("/api/tts", async (req, res) => {
+  const { text = "", voice = "en-US-AriaNeural", level = "B2" } = req.body || {};
+  if (!text.trim()) return res.status(400).json({ error: "Texte vide." });
+  const cleanText = text.slice(0, 2000);
+  const rate = TTS_RATES[level] || "+0%";
+  try {
+    let stream;
+    try {
+      stream = await getTtsStream(voice, cleanText, rate);
+    } catch {
+      // Connexion expirée : on repart d'une instance neuve
+      ttsPool.delete(voice);
+      stream = await getTtsStream(voice, cleanText, rate);
+    }
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.setHeader("Cache-Control", "no-store");
+    stream.on("error", () => { ttsPool.delete(voice); try { res.destroy(); } catch {} });
+    stream.pipe(res);
+  } catch (err) {
+    console.error("Erreur TTS:", err.message);
+    ttsPool.delete(voice);
+    res.status(500).json({ error: "Synthèse vocale indisponible : " + err.message });
+  }
+});
+
 // --- Génération d'un parcours de progression (niveau départ → niveau cible) ---
 
 const PROGRAM_SCHEMA = {
