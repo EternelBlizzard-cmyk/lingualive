@@ -1,0 +1,4 @@
+# Secrets — ne JAMAIS committer (clé API + code d'accès)
+.env
+
+node_modules/

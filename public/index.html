@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0e1420">
+  <title>LinguaLive — Coach de conversation en anglais</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">🎙️ <span>Lingua<em>Live</em></span></div>
+    <nav class="tabs" id="mainTabs">
+      <button class="tab active" data-view="talk">💬 Parler</button>
+      <button class="tab" data-view="vocab">📚 Vocabulaire <span class="badge" id="vocabDueBadge" hidden></span></button>
+      <button class="tab" data-view="progress">📈 Progrès</button>
+      <button class="tab" data-view="errors">🩹 Mes erreurs</button>
+    </nav>
+    <div class="topbar-right">
+      <span class="streak" id="streakChip" title="Jours consécutifs de pratique">🔥 0</span>
+      <button class="icon-btn" id="settingsBtn" title="Réglages">⚙️</button>
+    </div>
+  </header>
+
+  <!-- ═══════════ VUE : CONFIGURATION D'UNE SESSION ═══════════ -->
+  <main id="view-setup" class="view">
+    <section class="hero">
+      <h1>De vraies conversations.<br>De vrais progrès.</h1>
+      <p>Choisis un contexte, parle au micro, et reçois des corrections instantanées pendant que la conversation avance.</p>
+    </section>
+
+    <section class="setup-block">
+      <h2>1 · Le contexte</h2>
+      <div class="scenario-grid" id="scenarioGrid"></div>
+    </section>
+
+    <section class="setup-block">
+      <h2>2 · Le niveau</h2>
+      <div class="level-row" id="levelRow">
+        <button class="level-pill" data-level="B1"><strong>B1</strong><span>Je me débrouille</span></button>
+        <button class="level-pill active" data-level="B2"><strong>B2</strong><span>Je suis à l'aise</span></button>
+        <button class="level-pill" data-level="C1"><strong>C1</strong><span>Je suis fluide</span></button>
+        <button class="level-pill" data-level="C2"><strong>C2</strong><span>Quasi natif</span></button>
+      </div>
+    </section>
+
+    <section class="setup-block">
+      <h2>3 · La mission <span class="muted">(optionnelle — un objectif concret à accomplir)</span></h2>
+      <select id="missionSelect" class="mission-select"></select>
+    </section>
+
+    <section class="setup-block options-row">
+      <label class="switch-label">
+        <input type="checkbox" id="handsFreeToggle" checked>
+        <span class="switch"></span>
+        Mode mains libres — le micro se rouvre automatiquement après chaque réponse
+      </label>
+    </section>
+
+    <button class="cta" id="startBtn">🎤 Commencer la conversation</button>
+    <p class="mic-note" id="micSupportNote" hidden>⚠️ Reconnaissance vocale non disponible dans ce navigateur — utilise Chrome ou Edge pour parler au micro. Le clavier reste utilisable.</p>
+  </main>
+
+  <!-- ═══════════ VUE : CONVERSATION ═══════════ -->
+  <main id="view-chat" class="view" hidden>
+    <div class="chat-banner">
+      <div class="chat-banner-info">
+        <span id="chatScenario"></span>
+        <span class="lvl-chip" id="chatLevel"></span>
+      </div>
+      <div class="mission-chip" id="missionChip" hidden></div>
+      <button class="end-btn" id="endBtn">Terminer · Débrief</button>
+    </div>
+
+    <div class="chat-scroll" id="chatScroll"></div>
+
+    <div class="chat-controls">
+      <div class="interim" id="interimText"></div>
+      <div class="controls-row">
+        <button class="mic-btn" id="micBtn" title="Parler (ou maintenir Espace)">
+          <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
+        </button>
+        <input type="text" id="textInput" placeholder="…ou écris ta réponse ici" autocomplete="off">
+        <button class="send-btn" id="sendBtn" title="Envoyer">➤</button>
+      </div>
+    </div>
+  </main>
+
+  <!-- ═══════════ VUE : VOCABULAIRE ═══════════ -->
+  <main id="view-vocab" class="view" hidden>
+    <section class="panel" id="reviewPanel"></section>
+    <section class="panel">
+      <h2>📚 Toute ma base de vocabulaire</h2>
+      <div id="vocabList"></div>
+    </section>
+  </main>
+
+  <!-- ═══════════ VUE : PROGRÈS ═══════════ -->
+  <main id="view-progress" class="view" hidden>
+    <div id="progressContent"></div>
+  </main>
+
+  <!-- ═══════════ VUE : JOURNAL D'ERREURS ═══════════ -->
+  <main id="view-errors" class="view" hidden>
+    <section class="panel">
+      <h2>🩹 Mes erreurs récurrentes</h2>
+      <p class="muted">Chaque erreur corrigée en conversation est mémorisée ici. Lance une session ciblée : le coach orientera la conversation pour te faire retravailler ces points.</p>
+      <div id="errorsList"></div>
+      <button class="cta small" id="drillBtn" hidden>🎯 Session ciblée sur mes erreurs</button>
+    </section>
+  </main>
+
+  <!-- ═══════════ MODALE : DÉBRIEF ═══════════ -->
+  <div class="modal-backdrop" id="debriefModal" hidden>
+    <div class="modal debrief">
+      <div id="debriefContent"></div>
+      <button class="cta" id="debriefCloseBtn">Continuer</button>
+    </div>
+  </div>
+
+  <!-- ═══════════ MODALE : RÉGLAGES / CLÉ API ═══════════ -->
+  <div class="modal-backdrop" id="settingsModal" hidden>
+    <div class="modal">
+      <h2>⚙️ Réglages</h2>
+      <p id="keyStatus" class="muted"></p>
+      <label class="field-label">Clé API Anthropic</label>
+      <div class="key-row">
+        <input type="password" id="keyInput" placeholder="sk-ant-…">
+        <button class="cta small" id="keySaveBtn">Enregistrer</button>
+      </div>
+      <p class="error-text" id="keyError"></p>
+      <label class="field-label">Voix anglaise</label>
+      <select id="voiceSelect" class="mission-select"></select>
+      <button class="ghost-btn" id="settingsCloseBtn">Fermer</button>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+# Blueprint Render — déploiement en un clic depuis le dépôt GitHub
+# Sur render.com : New + > Blueprint > sélectionner ce dépôt.
+# Renseigner ensuite les deux variables d'environnement (jamais commitées) :
+#   ANTHROPIC_API_KEY = sk-ant-…   (ta clé Claude)
+#   ACCESS_CODE       = ton code d'accès (le même que local, ou un autre)
+services:
+  - type: web
+    name: lingualive
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ACCESS_CODE
+        sync: false
