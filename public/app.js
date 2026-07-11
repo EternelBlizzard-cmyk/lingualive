@@ -76,6 +76,40 @@ const SCENARIOS = [
   },
 ];
 
+// Interlocuteurs : chacun a un accent (voix TTS correspondante si disponible) et une origine
+const PERSONAS = {
+  daily: [
+    { name: "Emma", flag: "🇬🇧", origin: "London, UK", lang: "en-GB" },
+    { name: "Jake", flag: "🇺🇸", origin: "New York, USA", lang: "en-US" },
+    { name: "Liam", flag: "🇦🇺", origin: "Sydney, Australia", lang: "en-AU" },
+  ],
+  business: [
+    { name: "Sarah", flag: "🇺🇸", origin: "San Francisco, USA", lang: "en-US" },
+    { name: "Oliver", flag: "🇬🇧", origin: "Manchester, UK", lang: "en-GB" },
+    { name: "Priya", flag: "🇮🇳", origin: "Mumbai, India", lang: "en-IN" },
+  ],
+  interview: [
+    { name: "Rachel", flag: "🇺🇸", origin: "Chicago, USA", lang: "en-US" },
+    { name: "James", flag: "🇬🇧", origin: "London, UK", lang: "en-GB" },
+    { name: "Aisha", flag: "🇿🇦", origin: "Cape Town, South Africa", lang: "en-ZA" },
+  ],
+  appointment: [
+    { name: "Grace", flag: "🇬🇧", origin: "Edinburgh, UK", lang: "en-GB" },
+    { name: "Carlos", flag: "🇺🇸", origin: "Miami, USA", lang: "en-US" },
+    { name: "Mei", flag: "🇸🇬", origin: "Singapore", lang: "en-SG" },
+  ],
+  presentation: [
+    { name: "Michael", flag: "🇺🇸", origin: "Boston, USA", lang: "en-US" },
+    { name: "Charlotte", flag: "🇬🇧", origin: "London, UK", lang: "en-GB" },
+    { name: "Raj", flag: "🇮🇳", origin: "Bangalore, India", lang: "en-IN" },
+  ],
+  free: [
+    { name: "Alex", flag: "🇺🇸", origin: "Seattle, USA", lang: "en-US" },
+    { name: "Sophie", flag: "🇬🇧", origin: "Bristol, UK", lang: "en-GB" },
+    { name: "Noah", flag: "🇦🇺", origin: "Melbourne, Australia", lang: "en-AU" },
+  ],
+};
+
 const TYPE_LABELS = { grammar: "Grammaire", vocabulary: "Vocabulaire", register: "Registre", structure: "Structure" };
 const SRS_INTERVALS = [0, 1, 3, 7, 14, 30]; // jours entre révisions selon le niveau de maîtrise
 
@@ -112,16 +146,19 @@ async function api(path, opts = {}) {
 
 const state = {
   scenario: SCENARIOS[0],
+  persona: PERSONAS.daily[0],
   level: "B2",
   mission: "",
   handsFree: true,
-  history: [],        // [{role, text}]
+  pauseMs: store.get("pauseMs", 2000), // silence avant envoi de la phrase
+  history: [],        // [{role, text, corrections?, native?}]
   corrections: [],    // toutes les corrections de la session
   vocabSeen: [],      // vocab proposé pendant la session
   inSession: false,
   busy: false,
   missionDone: false,
   reviewQueue: [],
+  programStepIndex: null, // étape du parcours en cours, le cas échéant
 };
 
 /* ═══════════════ Synthèse vocale (TTS) ═══════════════ */
@@ -139,11 +176,19 @@ function loadVoices() {
 speechSynthesis.onvoiceschanged = loadVoices;
 
 function pickVoice() {
+  // 1. Accent de l'interlocuteur choisi (voix « naturelles » d'Edge en priorité)
+  const lang = state.inSession && state.persona ? state.persona.lang : null;
+  if (lang) {
+    const match = voices.find((v) => /natural/i.test(v.name) && v.lang === lang)
+      || voices.find((v) => v.lang === lang);
+    if (match) return match;
+  }
+  // 2. Voix choisie manuellement dans les réglages
   if (chosenVoiceURI) {
     const v = voices.find((v) => v.voiceURI === chosenVoiceURI);
     if (v) return v;
   }
-  // Voix « naturelles » d'Edge, sinon Google, sinon la première anglaise
+  // 3. Meilleure voix par défaut
   return voices.find((v) => /natural/i.test(v.name) && v.lang === "en-US")
     || voices.find((v) => /Google US English/i.test(v.name))
     || voices.find((v) => v.lang === "en-US")
@@ -168,7 +213,11 @@ function speak(text, onend) {
 
 const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recognition = null;
-let listening = false;
+let listening = false;      // le moteur tourne
+let wantListening = false;  // on souhaite écouter (relance auto si le moteur s'arrête seul)
+let finalBuffer = "";       // segments finalisés en attente d'envoi
+let pendingAlts = [];       // transcriptions alternatives des segments
+let silenceTimer = null;
 
 function initRecognition() {
   if (!SpeechRec) {
@@ -179,52 +228,86 @@ function initRecognition() {
   recognition = new SpeechRec();
   recognition.lang = "en-US";
   recognition.interimResults = true;
-  recognition.continuous = false;
-  recognition.maxAlternatives = 1;
+  // Écoute continue : on n'envoie qu'après un vrai silence (state.pauseMs),
+  // pour ne jamais couper l'utilisateur en pleine phrase.
+  recognition.continuous = true;
+  recognition.maxAlternatives = 4;
 
   recognition.onresult = (e) => {
-    let interim = "", final = "";
-    for (const res of e.results) {
-      if (res.isFinal) final += res[0].transcript;
-      else interim += res[0].transcript;
+    let interim = "";
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const res = e.results[i];
+      if (res.isFinal) {
+        finalBuffer = (finalBuffer + " " + res[0].transcript).trim();
+        for (let j = 1; j < res.length; j++) {
+          const alt = res[j].transcript.trim();
+          if (alt && alt.toLowerCase() !== res[0].transcript.trim().toLowerCase()) pendingAlts.push(alt);
+        }
+      } else {
+        interim += res[0].transcript;
+      }
     }
-    document.getElementById("interimText").textContent = interim || final;
-    if (final.trim()) {
-      stopListening();
-      sendTurn(final.trim());
-    }
+    document.getElementById("interimText").textContent = (finalBuffer + " " + interim).trim();
+    scheduleUtteranceEnd();
   };
   recognition.onend = () => {
     listening = false;
     document.getElementById("micBtn").classList.remove("listening");
+    // Le moteur s'arrête parfois seul (long silence) : on le relance si l'écoute est souhaitée
+    if (wantListening && state.inSession && !state.busy) {
+      try { recognition.start(); listening = true; document.getElementById("micBtn").classList.add("listening"); } catch {}
+    }
   };
   recognition.onerror = (e) => {
-    listening = false;
-    document.getElementById("micBtn").classList.remove("listening");
     if (e.error === "not-allowed") {
+      wantListening = false;
       document.getElementById("interimText").textContent = "⚠️ Autorise le micro dans le navigateur pour parler.";
     }
   };
 }
 
+// (Re)démarre le compte à rebours de fin de phrase : tant que tu parles, il est repoussé
+function scheduleUtteranceEnd() {
+  clearTimeout(silenceTimer);
+  if (!finalBuffer.trim()) return;
+  silenceTimer = setTimeout(finishUtterance, state.pauseMs);
+}
+
+function finishUtterance() {
+  const text = finalBuffer.trim();
+  const alts = pendingAlts.slice(0, 6);
+  finalBuffer = "";
+  pendingAlts = [];
+  if (!text) return;
+  stopListening();
+  sendTurn(text, { alternatives: alts });
+}
+
 function startListening() {
-  if (!recognition || listening || state.busy) return;
+  if (!recognition || state.busy) return;
   speechSynthesis.cancel();
+  wantListening = true;
+  finalBuffer = "";
+  pendingAlts = [];
   document.getElementById("interimText").textContent = "";
-  try { recognition.start(); } catch { return; }
-  listening = true;
+  if (!listening) {
+    try { recognition.start(); } catch { return; }
+    listening = true;
+  }
   document.getElementById("micBtn").classList.add("listening");
 }
 
 function stopListening() {
-  if (recognition && listening) recognition.stop();
+  wantListening = false;
+  clearTimeout(silenceTimer);
+  if (recognition && listening) try { recognition.stop(); } catch {}
   listening = false;
   document.getElementById("micBtn").classList.remove("listening");
 }
 
 /* ═══════════════ Navigation ═══════════════ */
 
-const views = ["setup", "chat", "vocab", "progress", "errors"];
+const views = ["setup", "chat", "program", "vocab", "progress", "errors"];
 
 function show(view) {
   views.forEach((v) => (document.getElementById("view-" + v).hidden = v !== view));
@@ -232,6 +315,7 @@ function show(view) {
     const target = t.dataset.view === "talk" ? (state.inSession ? "chat" : "setup") : t.dataset.view;
     t.classList.toggle("active", target === view);
   });
+  if (view === "program") renderProgram();
   if (view === "vocab") renderVocab();
   if (view === "progress") renderProgress();
   if (view === "errors") renderErrors();
@@ -255,8 +339,27 @@ function renderSetup() {
       <h3>${s.label}</h3>
       <p>${s.desc}</p>
     </button>`).join("");
+  renderPersonas();
   renderMissions();
 }
+
+function renderPersonas() {
+  const row = document.getElementById("personaRow");
+  const list = PERSONAS[state.scenario.id] || [];
+  if (!list.some((p) => p.name === state.persona?.name)) state.persona = list[0];
+  row.innerHTML = list.map((p) => `
+    <button class="persona-card ${p.name === state.persona?.name ? "active" : ""}" data-name="${p.name}">
+      <span class="p-flag">${p.flag}</span>
+      <span><span class="p-name">${p.name}</span><br><span class="p-origin">${p.origin}</span></span>
+    </button>`).join("");
+}
+
+document.getElementById("personaRow").addEventListener("click", (e) => {
+  const card = e.target.closest(".persona-card");
+  if (!card) return;
+  state.persona = (PERSONAS[state.scenario.id] || []).find((p) => p.name === card.dataset.name);
+  renderPersonas();
+});
 
 function renderMissions() {
   const sel = document.getElementById("missionSelect");
@@ -286,18 +389,28 @@ function knownErrorPatterns() {
   return store.get("errors", []).slice(0, 8).map((e) => e.pattern);
 }
 
-async function startSession(drillMode = false) {
-  state.mission = document.getElementById("missionSelect").value;
+async function startSession(opts = {}) {
+  if (opts.scenario) state.scenario = opts.scenario;
+  if (opts.level) state.level = opts.level;
+  if (opts.persona !== undefined) state.persona = opts.persona;
+  if (!(PERSONAS[state.scenario.id] || []).some((p) => p.name === state.persona?.name)) {
+    state.persona = (PERSONAS[state.scenario.id] || [])[0];
+  }
+  state.mission = opts.mission !== undefined ? opts.mission : document.getElementById("missionSelect").value;
   state.handsFree = document.getElementById("handsFreeToggle").checked;
   state.history = [];
   state.corrections = [];
   state.vocabSeen = [];
   state.missionDone = false;
   state.inSession = true;
-  state.drillMode = drillMode;
+  state.drillMode = !!opts.drill;
+  state.programStepIndex = opts.programStep ?? null;
 
   document.getElementById("chatScenario").textContent = `${state.scenario.emoji} ${state.scenario.label}`;
   document.getElementById("chatLevel").textContent = state.level;
+  const pc = document.getElementById("chatPersona");
+  pc.hidden = !state.persona;
+  if (state.persona) pc.textContent = `${state.persona.flag} ${state.persona.name}`;
   const mc = document.getElementById("missionChip");
   mc.hidden = !state.mission;
   mc.classList.remove("done");
@@ -405,10 +518,12 @@ async function sendTurn(userText, opts = {}) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         scenario: { role: state.scenario.role, setting: state.scenario.setting, label: state.scenario.label },
+        persona: state.persona ? { name: state.persona.name, origin: state.persona.origin } : null,
         level: state.level,
         mission: state.mission,
         history: state.history,
         userText,
+        alternatives: opts.alternatives || [],
         knownErrors: state.drillMode ? knownErrorPatterns() : [],
       }),
     });
@@ -423,10 +538,10 @@ async function sendTurn(userText, opts = {}) {
 
     // Annoter le message utilisateur avec les corrections
     if (userBubble) {
-      const decorated = addUserAnnotations(userBubble, t);
+      addUserAnnotations(userBubble, t);
       state.corrections.push(...(t.corrections || []));
     }
-    state.history.push({ role: "user", text: userText });
+    state.history.push({ role: "user", text: userText, corrections: t.corrections || [], native: t.nativeVersion || "" });
     state.history.push({ role: "assistant", text: t.reply });
     if (t.vocab?.length) state.vocabSeen.push(...t.vocab);
 
@@ -581,6 +696,7 @@ function saveSession(debrief) {
     date: new Date().toISOString(),
     scenario: state.scenario.label,
     emoji: state.scenario.emoji,
+    persona: state.persona ? `${state.persona.flag} ${state.persona.name}` : "",
     level: state.level,
     mission: state.mission,
     missionDone: state.missionDone,
@@ -588,8 +704,19 @@ function saveSession(debrief) {
     errors: state.corrections.length,
     errorsByType,
     cefr: debrief?.cefrEstimate || "",
+    // Transcript complet (avec corrections par réplique) pour l'historique consultable
+    messages: state.history,
   });
-  store.set("sessions", sessions.slice(0, 200));
+  store.set("sessions", sessions.slice(0, 80));
+
+  // Étape de parcours accomplie
+  if (state.programStepIndex !== null) {
+    const program = store.get("program", null);
+    if (program && program.steps[state.programStepIndex]) {
+      program.completed[state.programStepIndex] = true;
+      store.set("program", program);
+    }
+  }
 
   // Vocabulaire → SRS
   const vocab = store.get("vocab", []);
@@ -786,14 +913,195 @@ function renderProgress() {
   for (const s of sessions.slice(0, 25)) {
     const row = document.createElement("div");
     row.className = "session-row";
+    if (s.messages?.length) { row.style.cursor = "pointer"; row.title = "Voir la conversation complète"; }
     const d = new Date(s.date);
     row.innerHTML = `<span class="s-date">${d.toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}</span>
       <span class="s-scen"></span>
       <span class="muted">${s.turns} tours · ${s.errors} corr.</span>
-      <span class="s-cefr">${s.cefr || ""}</span>`;
-    row.querySelector(".s-scen").textContent = `${s.emoji} ${s.scenario}${s.missionDone ? " · 🎯✓" : ""}`;
+      <span class="s-cefr">${s.cefr || ""}</span>${s.messages?.length ? '<span class="muted">📜</span>' : ""}`;
+    row.querySelector(".s-scen").textContent = `${s.emoji} ${s.scenario}${s.persona ? " · " + s.persona : ""}${s.missionDone ? " · 🎯✓" : ""}`;
+    if (s.messages?.length) row.onclick = () => openTranscript(s);
     rows.appendChild(row);
   }
+}
+
+/* ═══════════════ Historique : transcript d'une session ═══════════════ */
+
+function openTranscript(session) {
+  const root = document.getElementById("historyContent");
+  root.innerHTML = "";
+  const h2 = document.createElement("h2");
+  const d = new Date(session.date);
+  h2.textContent = `📜 ${session.emoji} ${session.scenario} — ${d.toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}`;
+  root.appendChild(h2);
+  const sub = document.createElement("p");
+  sub.className = "muted";
+  sub.textContent = `${session.persona ? session.persona + " · " : ""}Niveau ${session.level}${session.mission ? " · 🎯 " + session.mission : ""}${session.cefr ? " · estimé " + session.cefr : ""}`;
+  root.appendChild(sub);
+
+  const wrap = document.createElement("div");
+  wrap.className = "transcript";
+  for (const m of session.messages) {
+    if (m.role === "user" && m.text.startsWith("(the conversation starts")) continue;
+    const div = document.createElement("div");
+    div.className = "t-msg " + (m.role === "user" ? "user" : "ai");
+    const txt = document.createElement("span");
+    txt.textContent = m.text;
+    div.appendChild(txt);
+    if (m.role === "assistant") {
+      const replay = document.createElement("button");
+      replay.className = "replay";
+      replay.textContent = " 🔊";
+      replay.title = "Réécouter";
+      replay.onclick = () => speak(m.text);
+      div.appendChild(replay);
+    }
+    if (m.corrections?.length) {
+      for (const c of m.corrections) {
+        const corr = document.createElement("div");
+        corr.className = "t-corr";
+        corr.innerHTML = `<span class="c-orig"></span> → <b></b> · <span></span>`;
+        corr.querySelector(".c-orig").textContent = c.original;
+        corr.querySelector("b").textContent = c.corrected;
+        corr.querySelector("span:last-child").textContent = c.explanation;
+        div.appendChild(corr);
+      }
+    }
+    if (m.native) {
+      const nv = document.createElement("div");
+      nv.className = "t-native";
+      nv.textContent = "🗣 " + m.native;
+      div.appendChild(nv);
+    }
+    wrap.appendChild(div);
+  }
+  root.appendChild(wrap);
+  document.getElementById("historyModal").hidden = false;
+}
+
+document.getElementById("historyCloseBtn").addEventListener("click", () => {
+  speechSynthesis.cancel();
+  document.getElementById("historyModal").hidden = true;
+});
+
+/* ═══════════════ Vue parcours (niveau départ → niveau cible) ═══════════════ */
+
+const LEVELS = ["B1", "B2", "C1", "C2"];
+
+function renderProgram() {
+  const root = document.getElementById("programContent");
+  const program = store.get("program", null);
+
+  if (!program) {
+    root.innerHTML = `
+      <section class="panel">
+        <h2>🎓 Mon parcours de progression</h2>
+        <p class="muted">Un programme d'étapes sur mesure, du niveau où tu es vers le niveau que tu vises — contextes variés, missions concrètes, difficulté croissante. Chaque étape est une conversation de 10-15 minutes.</p>
+        <div class="program-form-row">
+          <div>
+            <label class="field-label">Je pars de</label>
+            <select id="progStart" class="mission-select">${LEVELS.slice(0, 3).map((l) => `<option ${l === "B1" ? "selected" : ""}>${l}</option>`).join("")}</select>
+          </div>
+          <div>
+            <label class="field-label">Je vise</label>
+            <select id="progTarget" class="mission-select">${LEVELS.slice(1).map((l) => `<option ${l === "C1" ? "selected" : ""}>${l}</option>`).join("")}</select>
+          </div>
+        </div>
+        <label class="field-label">Mes priorités (optionnel)</label>
+        <input type="text" id="progPriorities" class="mission-select" placeholder="ex : préparer des entretiens, réunions clients…">
+        <button class="cta" id="progGenBtn" style="margin-top:16px">✨ Générer mon parcours</button>
+        <p class="error-text" id="progError"></p>
+      </section>`;
+    document.getElementById("progGenBtn").addEventListener("click", generateProgram);
+    return;
+  }
+
+  const done = program.completed.filter(Boolean).length;
+  const total = program.steps.length;
+  const nextIdx = program.completed.findIndex((c) => !c);
+  root.innerHTML = `
+    <div class="program-header">
+      <h2>🎓 ${program.title}</h2>
+      <span class="lvl-chip">${program.startLevel} → ${program.targetLevel}</span>
+      <button class="ghost-btn" id="progResetBtn" style="width:auto;margin:0">Nouveau parcours</button>
+    </div>
+    <p class="muted">${done} / ${total} étapes accomplies</p>
+    <div class="program-progressbar"><div style="width:${(done / total) * 100}%"></div></div>
+    <div id="programSteps"></div>`;
+
+  const stepsRoot = root.querySelector("#programSteps");
+  program.steps.forEach((step, i) => {
+    const scen = SCENARIOS.find((s) => s.id === step.scenarioId) || SCENARIOS[5];
+    const div = document.createElement("div");
+    div.className = "program-step" + (program.completed[i] ? " done" : "") + (i === nextIdx ? " next" : "");
+    div.innerHTML = `
+      <span class="ps-num">${program.completed[i] ? "✓" : i + 1}</span>
+      <div class="ps-body">
+        <div class="ps-title">${scen.emoji} <span></span> <span class="lvl-chip">${step.level}</span></div>
+        <div class="ps-meta">🎯 <span></span></div>
+        <div class="ps-focus">📌 Point travaillé : <span></span></div>
+      </div>
+      <button class="cta small">${program.completed[i] ? "Refaire" : "Démarrer"}</button>`;
+    div.querySelector(".ps-title span:not(.lvl-chip)").textContent = step.title;
+    div.querySelector(".ps-meta span").textContent = step.mission;
+    div.querySelector(".ps-focus span").textContent = step.focus;
+    div.querySelector("button.cta").addEventListener("click", () => startProgramStep(i));
+    stepsRoot.appendChild(div);
+  });
+  root.querySelector("#progResetBtn").addEventListener("click", () => {
+    if (confirm("Abandonner ce parcours et en créer un nouveau ?")) {
+      localStorage.removeItem("lingualive_program");
+      renderProgram();
+    }
+  });
+}
+
+async function generateProgram() {
+  const btn = document.getElementById("progGenBtn");
+  const err = document.getElementById("progError");
+  const startLevel = document.getElementById("progStart").value;
+  const targetLevel = document.getElementById("progTarget").value;
+  if (LEVELS.indexOf(targetLevel) <= LEVELS.indexOf(startLevel)) {
+    err.textContent = "Le niveau visé doit être supérieur au niveau de départ.";
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = "⏳ Génération du parcours (30 s environ)…";
+  err.textContent = "";
+  try {
+    const res = await api("/api/program", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ startLevel, targetLevel, priorities: document.getElementById("progPriorities").value.trim() }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Erreur serveur");
+    store.set("program", {
+      ...data.program,
+      startLevel,
+      targetLevel,
+      completed: data.program.steps.map(() => false),
+      createdAt: Date.now(),
+    });
+    renderProgram();
+  } catch (e) {
+    err.textContent = e.message;
+    btn.disabled = false;
+    btn.textContent = "✨ Générer mon parcours";
+  }
+}
+
+function startProgramStep(i) {
+  const program = store.get("program", null);
+  const step = program?.steps[i];
+  if (!step) return;
+  const scenario = SCENARIOS.find((s) => s.id === step.scenarioId) || SCENARIOS[5];
+  startSession({
+    scenario,
+    level: step.level,
+    mission: `${step.mission} — Point à travailler : ${step.focus}`,
+    programStep: i,
+  });
 }
 
 /* ═══════════════ Vue journal d'erreurs ═══════════════ */
@@ -819,9 +1127,8 @@ function renderErrors() {
 }
 
 document.getElementById("drillBtn").addEventListener("click", () => {
-  show("setup");
   // La prochaine session ciblera les erreurs du journal
-  startSession(true);
+  startSession({ drill: true, mission: "" });
 });
 
 /* ═══════════════ Réglages / clé API ═══════════════ */
@@ -835,7 +1142,13 @@ function openSettings(errorMsg = "") {
       : "Aucune clé API configurée — colle ta clé Anthropic ci-dessous.";
   }).catch(() => {});
   loadVoices();
+  document.getElementById("pauseSelect").value = String(state.pauseMs);
 }
+
+document.getElementById("pauseSelect").addEventListener("change", (e) => {
+  state.pauseMs = parseInt(e.target.value, 10) || 2000;
+  store.set("pauseMs", state.pauseMs);
+});
 
 document.getElementById("settingsBtn").addEventListener("click", () => openSettings());
 document.getElementById("settingsCloseBtn").addEventListener("click", () => (document.getElementById("settingsModal").hidden = true));

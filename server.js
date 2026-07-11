@@ -115,12 +115,13 @@ const LEVEL_GUIDE = {
   C2: "Speak as with a native professional: fast-paced, idiomatic, culturally loaded references, irony, complex argumentation. Challenge the learner intellectually.",
 };
 
-function turnSystemPrompt({ scenario, level, mission, knownErrors }) {
+function turnSystemPrompt({ scenario, level, mission, knownErrors, persona }) {
   return `You are LinguaLive, an English conversation partner and language coach for a French-speaking learner.
 
 ROLE-PLAY
-You are playing this character, realistically and consistently: ${scenario.role}
+You are playing this character, realistically and consistently: ${persona ? `${persona.name}, from ${persona.origin} — ` : ""}${scenario.role}
 Setting: ${scenario.setting}
+${persona ? `Stay ${persona.name} throughout. Use turns of phrase, vocabulary and cultural references typical of ${persona.origin} English speakers.` : ""}
 ${mission ? `The learner has a mission to accomplish in this conversation: "${mission}". Give them realistic opportunities to achieve it (including obstacles or objections when the scenario calls for it), and mark missionStatus "accomplished" as soon as they clearly succeed.` : "No specific mission: keep a lively, engaging conversation going within the scenario."}
 
 LEVEL — CEFR ${level}
@@ -129,6 +130,7 @@ If the learner is clearly comfortable, gradually raise complexity within the lev
 
 COACHING (applies to the learner's LAST utterance only)
 - The utterance comes from speech recognition: no punctuation, and occasional mis-transcribed homophones. Never correct punctuation or capitalization. Flag a suspected transcription artifact only if it is clearly a language error regardless.
+- The utterance may be followed by a bracketed line "[reconnaissance — autres transcriptions possibles: ...]": these are alternative ways the recognizer heard the SAME speech (the learner typed none of this — never treat the bracketed line as their words). Cross-reference them: if a word looks odd but an alternative or the context suggests the learner actually said something correct, respond to the intended meaning and do NOT flag it as an error. If the whole utterance is unintelligible even with alternatives, stay in character and ask them to repeat.
 - Report every real error in "corrections" with a brief French explanation. No error → empty array. Never invent errors to seem useful.
 - "nativeVersion": give the natural native phrasing when the learner's sentence was understandable but clunky. Empty string when already natural.
 ${knownErrors && knownErrors.length ? `- The learner's recurring weaknesses: ${knownErrors.join("; ")}. Occasionally steer the conversation so they must use these patterns, and be especially vigilant about them.` : ""}
@@ -137,20 +139,24 @@ ${knownErrors && knownErrors.length ? `- The learner's recurring weaknesses: ${k
 }
 
 app.post("/api/turn", async (req, res) => {
-  const { scenario, level = "B2", mission = "", history = [], userText = "", knownErrors = [] } = req.body || {};
+  const { scenario, level = "B2", mission = "", history = [], userText = "", knownErrors = [], alternatives = [], persona = null } = req.body || {};
   if (!scenario || !scenario.role) return res.status(400).json({ error: "Scénario manquant." });
   if (!userText.trim()) return res.status(400).json({ error: "Message vide." });
 
   const messages = history
     .slice(-MAX_HISTORY)
     .map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.text }));
-  messages.push({ role: "user", content: userText.trim() });
+  const alts = (Array.isArray(alternatives) ? alternatives : []).filter((a) => a && a.trim()).slice(0, 6);
+  messages.push({
+    role: "user",
+    content: userText.trim() + (alts.length ? `\n[reconnaissance — autres transcriptions possibles: ${alts.join(" | ")}]` : ""),
+  });
 
   try {
     const message = await client.messages.create({
       model: MODEL,
       max_tokens: 2000,
-      system: turnSystemPrompt({ scenario, level, mission, knownErrors }),
+      system: turnSystemPrompt({ scenario, level, mission, knownErrors, persona }),
       output_config: { format: { type: "json_schema", schema: TURN_SCHEMA } },
       messages,
     });
@@ -247,6 +253,70 @@ ${corrList || "(aucune)"}`;
     }
     const textBlock = message.content.find((b) => b.type === "text");
     res.json({ debrief: JSON.parse(textBlock.text) });
+  } catch (err) {
+    handleApiError(err, res);
+  }
+});
+
+// --- Génération d'un parcours de progression (niveau départ → niveau cible) ---
+
+const PROGRAM_SCHEMA = {
+  type: "object",
+  properties: {
+    title: { type: "string", description: "Titre motivant du parcours, en français, ex: 'De B1 à C1 : parler anglais avec assurance'" },
+    steps: {
+      type: "array",
+      description: "16 à 24 étapes de conversation, difficulté strictement croissante du niveau de départ au niveau cible",
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Titre court de l'étape en français, ex: 'Small talk au café'" },
+          scenarioId: {
+            type: "string",
+            enum: ["daily", "business", "interview", "appointment", "presentation", "free"],
+            description: "Contexte de l'étape — varier les contextes au fil du parcours",
+          },
+          level: { type: "string", enum: ["B1", "B2", "C1", "C2"], description: "Niveau CEFR de l'étape (progression du départ vers la cible)" },
+          mission: { type: "string", description: "Mission concrète et vérifiable à accomplir pendant la conversation, en français" },
+          focus: { type: "string", description: "Le point de langue travaillé en priorité dans cette étape, en français, ex: 'les temps du passé', 'le vocabulaire de la négociation'" },
+        },
+        required: ["title", "scenarioId", "level", "mission", "focus"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["title", "steps"],
+  additionalProperties: false,
+};
+
+app.post("/api/program", async (req, res) => {
+  const { startLevel = "B1", targetLevel = "C1", priorities = "" } = req.body || {};
+
+  const prompt = `Crée un parcours de progression en anglais ORAL, du niveau ${startLevel} au niveau ${targetLevel}.
+
+Contraintes pédagogiques :
+- 16 à 24 étapes de conversation, chacune réalisable en 10-15 minutes de dialogue.
+- Progression réaliste : on démarre confortablement à ${startLevel}, on termine sur des étapes exigeantes de niveau ${targetLevel}.
+- Varier les contextes (quotidien, business, entretien, rendez-vous/services, présentation client, conversation libre) avec une dominante professionnelle en seconde moitié.
+- Chaque étape a UNE mission concrète (accomplissable et vérifiable en conversation) et UN point de langue prioritaire (grammaire, lexique, registre ou stratégie de discours) — les points de langue doivent couvrir les difficultés classiques des francophones (for/since, present perfect, prépositions, faux amis, phrasal verbs, conditionnels, registre formel/informel...).
+- Les 2-3 dernières étapes sont des synthèses de haut niveau (présentation à enjeu, entretien difficile, débat).${priorities ? `\n- Priorités exprimées par l'apprenant : ${priorities}` : ""}`;
+
+  try {
+    const stream = client.messages.stream({
+      model: MODEL,
+      max_tokens: 12000,
+      thinking: { type: "adaptive" },
+      system:
+        "Tu es un ingénieur pédagogique spécialiste de l'anglais oral pour francophones, concepteur de parcours du type Global Exam. Tu produis des parcours progressifs, concrets et motivants.",
+      output_config: { format: { type: "json_schema", schema: PROGRAM_SCHEMA } },
+      messages: [{ role: "user", content: prompt }],
+    });
+    const message = await stream.finalMessage();
+    if (message.stop_reason === "refusal") {
+      return res.status(422).json({ error: "Génération refusée." });
+    }
+    const textBlock = message.content.find((b) => b.type === "text");
+    res.json({ program: JSON.parse(textBlock.text) });
   } catch (err) {
     handleApiError(err, res);
   }

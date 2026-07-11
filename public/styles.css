@@ -312,6 +312,61 @@ body {
 .debrief .upgrade .u-better { color: var(--ok); font-weight: 600; }
 .debrief .cta { margin-top: 20px; }
 
+/* ── Interlocuteurs (avatars/accents) ── */
+.persona-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.persona-card {
+  flex: 1; min-width: 150px; max-width: 220px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 12px 14px; cursor: pointer; color: var(--text); font-family: inherit;
+  display: flex; align-items: center; gap: 10px; text-align: left; transition: all .15s;
+}
+.persona-card:hover { border-color: var(--accent); }
+.persona-card.active { border-color: var(--accent); background: linear-gradient(160deg, #1b2c4e, var(--panel)); box-shadow: 0 0 0 1px var(--accent); }
+.persona-card .p-flag { font-size: 1.5rem; }
+.persona-card .p-name { font-weight: 700; font-size: 0.95rem; }
+.persona-card .p-origin { color: var(--muted); font-size: 0.78rem; }
+.persona-chip {
+  background: var(--panel2); border: 1px solid var(--line); border-radius: 999px;
+  padding: 3px 12px; font-size: 0.85rem; font-weight: 600;
+}
+
+/* ── Parcours ── */
+.program-header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 6px; }
+.program-header h2 { flex: 1; font-size: 1.15rem; }
+.program-progressbar { height: 10px; background: var(--bg2); border-radius: 999px; overflow: hidden; margin: 12px 0 20px; }
+.program-progressbar > div { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); border-radius: 999px; transition: width .3s; }
+.program-step {
+  display: flex; gap: 14px; align-items: flex-start;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 14px 16px; margin-bottom: 10px;
+}
+.program-step.done { opacity: .55; }
+.program-step.next { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.program-step .ps-num {
+  width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
+  background: var(--panel2); border: 1px solid var(--line);
+  display: grid; place-items: center; font-weight: 800; font-size: 0.9rem;
+}
+.program-step.done .ps-num { background: var(--ok); border-color: var(--ok); color: #06281a; }
+.program-step .ps-body { flex: 1; }
+.program-step .ps-title { font-weight: 700; }
+.program-step .ps-meta { color: var(--muted); font-size: 0.84rem; margin-top: 3px; line-height: 1.45; }
+.program-step .ps-focus { color: var(--structure); font-size: 0.82rem; margin-top: 3px; }
+.program-step .cta.small { margin-top: 0; align-self: center; flex-shrink: 0; }
+.program-form-row { display: flex; gap: 14px; flex-wrap: wrap; margin: 14px 0; }
+.program-form-row > div { flex: 1; min-width: 160px; }
+
+/* ── Transcript d'une session ── */
+.transcript { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+.transcript .t-msg { padding: 10px 14px; border-radius: 12px; font-size: 0.92rem; line-height: 1.45; max-width: 92%; }
+.transcript .t-msg.user { align-self: flex-end; background: linear-gradient(135deg, #2b5cd9, #4f8cff); }
+.transcript .t-msg.ai { align-self: flex-start; background: var(--panel); border: 1px solid var(--line); }
+.transcript .t-corr { font-size: 0.8rem; margin-top: 6px; padding-top: 6px; border-top: 1px dashed rgba(255,255,255,.25); }
+.transcript .t-corr .c-orig { text-decoration: line-through; opacity: .7; }
+.transcript .t-native { font-size: 0.8rem; font-style: italic; margin-top: 4px; opacity: .9; }
+.transcript .replay { background: none; border: none; cursor: pointer; opacity: .6; }
+.transcript .replay:hover { opacity: 1; }
+
 @media (max-width: 640px) {
   .hero h1 { font-size: 1.5rem; }
   .msg { max-width: 92%; }
