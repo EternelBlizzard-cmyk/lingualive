@@ -152,6 +152,15 @@
       <p class="error-text" id="keyError"></p>
       <label class="field-label">Voix anglaise par défaut <span class="muted">(l'accent de l'interlocuteur choisi est prioritaire quand une voix correspondante existe)</span></label>
       <select id="voiceSelect" class="mission-select"></select>
+      <div class="key-row" style="margin-top:10px">
+        <button class="cta small" id="voiceTestBtn" style="margin-top:0">🔊 Tester la voix</button>
+        <span class="muted" id="voiceInfo" style="align-self:center"></span>
+      </div>
+      <label class="switch-label" style="margin-top:14px">
+        <input type="checkbox" id="accentToggle" checked>
+        <span class="switch"></span>
+        Utiliser l'accent de l'interlocuteur quand une voix correspondante existe
+      </label>
       <label class="field-label">Pause de fin de phrase — temps de silence avant que ta réponse parte</label>
       <select id="pauseSelect" class="mission-select">
         <option value="1500">1,5 s — réactif</option>

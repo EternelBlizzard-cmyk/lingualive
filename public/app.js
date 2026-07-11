@@ -177,7 +177,7 @@ speechSynthesis.onvoiceschanged = loadVoices;
 
 function pickVoice() {
   // 1. Accent de l'interlocuteur choisi (voix « naturelles » d'Edge en priorité)
-  const lang = state.inSession && state.persona ? state.persona.lang : null;
+  const lang = state.inSession && state.persona && store.get("personaAccent", true) ? state.persona.lang : null;
   if (lang) {
     const match = voices.find((v) => /natural/i.test(v.name) && v.lang === lang)
       || voices.find((v) => v.lang === lang);
@@ -197,16 +197,42 @@ function pickVoice() {
 
 const SPEECH_RATE = { B1: 0.85, B2: 0.95, C1: 1.0, C2: 1.08 };
 
+let resumeTicker = null;
+
 function speak(text, onend) {
   speechSynthesis.cancel();
-  const utt = new SpeechSynthesisUtterance(text);
-  const voice = pickVoice();
-  if (voice) utt.voice = voice;
-  utt.lang = voice?.lang || "en-US";
-  utt.rate = SPEECH_RATE[state.level] || 0.95;
-  utt.onend = () => onend && onend();
-  utt.onerror = () => onend && onend();
-  speechSynthesis.speak(utt);
+  clearInterval(resumeTicker);
+  if (!voices.length) loadVoices(); // les voix arrivent parfois après le chargement de la page
+
+  const utter = (voice, isRetry) => {
+    const utt = new SpeechSynthesisUtterance(text);
+    if (voice) { utt.voice = voice; utt.lang = voice.lang; }
+    else utt.lang = "en-US";
+    utt.rate = SPEECH_RATE[state.level] || 0.95;
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearInterval(resumeTicker);
+      onend && onend();
+    };
+    utt.onend = finish;
+    utt.onerror = (e) => {
+      // Certaines voix (notamment réseau) échouent en silence : on retente une fois avec la voix système par défaut
+      if (!isRetry && e.error !== "interrupted" && e.error !== "canceled") {
+        settled = true;
+        clearInterval(resumeTicker);
+        setTimeout(() => utter(null, true), 60);
+        return;
+      }
+      finish();
+    };
+    // Contournement Chrome : la synthèse se met parfois en pause seule sur les textes longs
+    resumeTicker = setInterval(() => { if (speechSynthesis.paused) speechSynthesis.resume(); }, 3000);
+    speechSynthesis.speak(utt);
+  };
+  // Contournement Chrome : speak() immédiatement après cancel() est parfois ignoré
+  setTimeout(() => utter(pickVoice(), false), 80);
 }
 
 /* ═══════════════ Reconnaissance vocale (STT) ═══════════════ */
@@ -300,7 +326,9 @@ function startListening() {
 function stopListening() {
   wantListening = false;
   clearTimeout(silenceTimer);
-  if (recognition && listening) try { recognition.stop(); } catch {}
+  // abort() libère le micro immédiatement — indispensable sur mobile, où un micro
+  // encore ouvert empêche la synthèse vocale de parler
+  if (recognition && listening) try { recognition.abort(); } catch {}
   listening = false;
   document.getElementById("micBtn").classList.remove("listening");
 }
@@ -1143,7 +1171,20 @@ function openSettings(errorMsg = "") {
   }).catch(() => {});
   loadVoices();
   document.getElementById("pauseSelect").value = String(state.pauseMs);
+  document.getElementById("accentToggle").checked = store.get("personaAccent", true);
+  const v = pickVoice();
+  document.getElementById("voiceInfo").textContent = v ? `Voix actuelle : ${v.name}` : "⚠️ Aucune voix anglaise détectée";
 }
+
+document.getElementById("voiceTestBtn").addEventListener("click", () => {
+  const v = pickVoice();
+  document.getElementById("voiceInfo").textContent = v ? `Voix actuelle : ${v.name}` : "⚠️ Aucune voix anglaise détectée";
+  speak("Hello! Can you hear me clearly? This is how I will sound during our conversations.");
+});
+
+document.getElementById("accentToggle").addEventListener("change", (e) => {
+  store.set("personaAccent", e.target.checked);
+});
 
 document.getElementById("pauseSelect").addEventListener("change", (e) => {
   state.pauseMs = parseInt(e.target.value, 10) || 2000;
