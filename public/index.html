@@ -77,7 +77,8 @@
         <span class="lvl-chip" id="chatLevel"></span>
       </div>
       <div class="mission-chip" id="missionChip" hidden></div>
-      <button class="end-btn" id="endBtn">Terminer · Débrief</button>
+      <button class="end-btn" id="backToCallBtn" style="margin-left:auto">📞 Mode appel</button>
+      <button class="end-btn" id="endBtn" style="margin-left:0">Terminer · Débrief</button>
     </div>
 
     <div class="chat-scroll" id="chatScroll"></div>
@@ -128,6 +129,28 @@
     <div class="modal debrief">
       <div id="debriefContent"></div>
       <button class="cta" id="debriefCloseBtn">Continuer</button>
+    </div>
+  </div>
+
+  <!-- ═══════════ MODE APPEL (immersif, plein écran) ═══════════ -->
+  <div id="callOverlay" hidden>
+    <div class="call-top">
+      <span id="callScenarioLabel"></span>
+      <button class="call-min" id="callToChatBtn" title="Voir le chat et les corrections">💬 Chat</button>
+    </div>
+    <div class="call-center">
+      <button class="call-avatar" id="callAvatar" title="Toucher pour interrompre et parler">
+        <span class="ca-ring r1"></span><span class="ca-ring r2"></span><span class="ca-ring r3"></span>
+        <span class="ca-flag" id="callFlag">🎙️</span>
+      </button>
+      <div class="call-name" id="callName"></div>
+      <div class="call-status" id="callStatus">…</div>
+      <div class="call-caption" id="callCaption"></div>
+    </div>
+    <div class="call-toasts" id="callToasts"></div>
+    <div class="call-actions">
+      <button class="call-btn mic" id="callMicBtn" title="Parler">🎤</button>
+      <button class="call-btn end" id="callEndBtn" title="Terminer et voir le débrief">📞</button>
     </div>
   </div>
 

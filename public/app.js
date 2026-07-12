@@ -237,6 +237,7 @@ async function speak(text, onend) {
     };
     audio.onerror = () => { URL.revokeObjectURL(url); speakLocal(text, onend); };
     await audio.play();
+    setCallState("speaking", text);
   } catch {
     speakLocal(text, onend);
   }
@@ -259,6 +260,7 @@ function speakLocal(text, onend) {
       clearInterval(resumeTicker);
       onend && onend();
     };
+    utt.onstart = () => setCallState("speaking", text);
     utt.onend = finish;
     utt.onerror = (e) => {
       // Certaines voix (notamment réseau) échouent en silence : on retente une fois avec la voix système par défaut
@@ -316,7 +318,9 @@ function initRecognition() {
         interim += res[0].transcript;
       }
     }
-    document.getElementById("interimText").textContent = (finalBuffer + " " + interim).trim();
+    const live = (finalBuffer + " " + interim).trim();
+    document.getElementById("interimText").textContent = live;
+    if (callOpen() && live) document.getElementById("callCaption").textContent = live;
     scheduleUtteranceEnd();
   };
   recognition.onend = () => {
@@ -364,6 +368,7 @@ function startListening() {
     listening = true;
   }
   document.getElementById("micBtn").classList.add("listening");
+  setCallState("listening", "");
 }
 
 function stopListening() {
@@ -375,6 +380,78 @@ function stopListening() {
   listening = false;
   document.getElementById("micBtn").classList.remove("listening");
 }
+
+/* ═══════════════ Mode appel (interaction immersive type Leo AI) ═══════════════ */
+
+function callOverlayEl() { return document.getElementById("callOverlay"); }
+function callOpen() { return !callOverlayEl().hidden; }
+
+function openCall() {
+  if (!state.inSession) return;
+  callOverlayEl().hidden = false;
+  document.getElementById("callFlag").textContent = state.persona?.flag || "🎙️";
+  document.getElementById("callName").textContent = state.persona?.name || state.scenario.label;
+  document.getElementById("callScenarioLabel").textContent =
+    `${state.scenario.emoji} ${state.scenario.label} · ${state.level}${state.mission ? " · 🎯 mission en cours" : ""}`;
+}
+
+function closeCall() {
+  callOverlayEl().hidden = true;
+}
+
+function setCallState(mode, caption) {
+  if (!callOpen()) return;
+  const o = callOverlayEl();
+  o.classList.remove("speaking", "listening", "thinking");
+  if (mode) o.classList.add(mode);
+  const labels = {
+    listening: "🟢 Je t'écoute — parle librement",
+    thinking: "réfléchit…",
+    speaking: `${state.persona?.name || "Ton interlocuteur"} parle — touche l'avatar pour l'interrompre`,
+  };
+  document.getElementById("callStatus").textContent = labels[mode] || "";
+  if (caption !== undefined) document.getElementById("callCaption").textContent = caption;
+}
+
+function addCallToast(build, cls) {
+  if (!callOpen()) return;
+  const t = document.createElement("div");
+  t.className = "call-toast" + (cls ? " " + cls : "");
+  build(t);
+  document.getElementById("callToasts").appendChild(t);
+  setTimeout(() => t.remove(), 11000);
+}
+
+function callToastsFromCoach(t) {
+  for (const c of t.corrections || []) {
+    addCallToast((el) => {
+      const o = document.createElement("span"); o.className = "c-orig"; o.textContent = c.original;
+      const b = document.createElement("b"); b.textContent = " " + c.corrected;
+      const ex = document.createElement("div"); ex.textContent = c.explanation; ex.style.opacity = ".8";
+      el.append(o, b, ex);
+    });
+  }
+  if (t.nativeVersion) {
+    addCallToast((el) => {
+      const b = document.createElement("b"); b.textContent = "🗣 Un natif dirait : ";
+      const s = document.createElement("span"); s.textContent = t.nativeVersion;
+      el.append(b, s);
+    }, "native");
+  }
+}
+
+document.getElementById("callToChatBtn").addEventListener("click", closeCall);
+document.getElementById("backToCallBtn").addEventListener("click", openCall);
+document.getElementById("callEndBtn").addEventListener("click", () => { closeCall(); endSession(); });
+document.getElementById("callMicBtn").addEventListener("click", () => {
+  if (listening) { stopListening(); setCallState("", ""); }
+  else { stopAudio(); startListening(); }
+});
+// Toucher l'avatar pendant qu'il parle = l'interrompre et prendre la parole (comme au téléphone)
+document.getElementById("callAvatar").addEventListener("click", () => {
+  stopAudio();
+  startListening();
+});
 
 /* ═══════════════ Navigation ═══════════════ */
 
@@ -487,7 +564,10 @@ async function startSession(opts = {}) {
   mc.classList.remove("done");
   if (state.mission) mc.textContent = "🎯 " + state.mission;
   document.getElementById("chatScroll").innerHTML = "";
+  document.getElementById("callToasts").innerHTML = "";
+  document.getElementById("callCaption").textContent = "";
   show("chat");
+  openCall(); // interaction immersive type appel — 💬 pour basculer sur le chat
 
   // Le partenaire ouvre la conversation
   await sendTurn("(the conversation starts — greet me and open the scene naturally)", { hidden: true });
@@ -582,6 +662,7 @@ async function sendTurn(userText, opts = {}) {
   typing.textContent = "réfléchit";
   scroll.appendChild(typing);
   scroll.scrollTop = scroll.scrollHeight;
+  setCallState("thinking", opts.hidden ? "" : userText);
 
   // Un seul corps de requête, partagé par la réponse rapide et l'analyse.
   // L'historique est figé AVANT ce tour pour que les deux appels voient la même chose.
@@ -636,6 +717,7 @@ async function runCoach(post, userBubble, historyEntry) {
     historyEntry.native = t.nativeVersion || "";
     if (t.vocab?.length) state.vocabSeen.push(...t.vocab);
     if (userBubble && userBubble.isConnected) addUserAnnotations(userBubble, t);
+    callToastsFromCoach(t);
 
     if (t.missionStatus === "accomplished" && !state.missionDone) {
       state.missionDone = true;
@@ -689,6 +771,7 @@ document.getElementById("endBtn").addEventListener("click", endSession);
 async function endSession() {
   stopListening();
   stopAudio();
+  closeCall();
   const userTurns = state.history.filter((m) => m.role === "user").length;
   if (userTurns < 2) {
     if (confirm("Session très courte — quitter sans débrief ?")) {
