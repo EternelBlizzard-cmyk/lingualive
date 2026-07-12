@@ -1172,8 +1172,22 @@ function renderProgram() {
             <select id="progTarget" class="mission-select">${LEVELS.slice(1).map((l) => `<option ${l === "C1" ? "selected" : ""}>${l}</option>`).join("")}</select>
           </div>
         </div>
-        <label class="field-label">Mes priorités (optionnel)</label>
-        <input type="text" id="progPriorities" class="mission-select" placeholder="ex : préparer des entretiens, réunions clients…">
+        <div class="program-form-row">
+          <div>
+            <label class="field-label">Mon rythme</label>
+            <select id="progRhythm" class="mission-select">
+              <option value="14">2 étapes par jour</option>
+              <option value="7">1 étape par jour</option>
+              <option value="5" selected>5 étapes par semaine</option>
+              <option value="3">3 étapes par semaine</option>
+              <option value="2">2 étapes par semaine</option>
+            </select>
+          </div>
+          <div>
+            <label class="field-label">Mes priorités (optionnel)</label>
+            <input type="text" id="progPriorities" class="mission-select" placeholder="ex : entretiens, réunions clients…">
+          </div>
+        </div>
         <button class="cta" id="progGenBtn" style="margin-top:16px">✨ Générer mon parcours</button>
         <p class="error-text" id="progError"></p>
       </section>`;
@@ -1184,15 +1198,61 @@ function renderProgram() {
   const done = program.completed.filter(Boolean).length;
   const total = program.steps.length;
   const nextIdx = program.completed.findIndex((c) => !c);
+  const frac = total ? done / total : 0;
+
+  // Temps de conversation total et restant
+  const stepMin = (s) => s.durationMin || 12;
+  const totalMin = program.steps.reduce((a, s) => a + stepMin(s), 0);
+  const remainingMin = program.steps.reduce((a, s, i) => a + (program.completed[i] ? 0 : stepMin(s)), 0);
+  const fmtH = (min) => (min >= 60 ? `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, "0")}` : `${min} min`);
+
+  // Rythme → durée calendaire et date de fin estimées
+  const rhythm = program.rhythmPerWeek || 5;
+  const remainingSteps = total - done;
+  const daysLeft = Math.ceil((remainingSteps / rhythm) * 7);
+  const endDate = new Date(Date.now() + daysLeft * 86400000);
+  const endStr = endDate.toLocaleDateString("fr-FR", { day: "numeric", month: "long" });
+  const RHYTHM_LABELS = { 14: "2 étapes/jour", 7: "1 étape/jour", 5: "5 étapes/sem.", 3: "3 étapes/sem.", 2: "2 étapes/sem." };
+
+  // Jauge de niveau : position interpolée entre niveau de départ et niveau cible
+  const span = LEVELS.slice(LEVELS.indexOf(program.startLevel), LEVELS.indexOf(program.targetLevel) + 1);
+  const pos = frac * (span.length - 1);
+  const below = Math.min(Math.floor(pos), span.length - 2);
+  const currentLabel = pos >= span.length - 1 ? program.targetLevel : span[below] + (pos - below > 0.45 ? "+" : "");
+
   root.innerHTML = `
     <div class="program-header">
       <h2>🎓 ${program.title}</h2>
-      <span class="lvl-chip">${program.startLevel} → ${program.targetLevel}</span>
       <button class="ghost-btn" id="progResetBtn" style="width:auto;margin:0">Nouveau parcours</button>
     </div>
-    <p class="muted">${done} / ${total} étapes accomplies</p>
-    <div class="program-progressbar"><div style="width:${(done / total) * 100}%"></div></div>
+
+    <div class="gauge-card">
+      <div class="gauge-labels">${span.map((l, i) => `<span style="left:${(i / (span.length - 1)) * 100}%">${l}</span>`).join("")}</div>
+      <div class="level-gauge">
+        <div class="lg-fill" style="width:${frac * 100}%"></div>
+        <div class="lg-marker" style="left:${frac * 100}%"><span>≈ ${currentLabel}</span></div>
+      </div>
+      <div class="gauge-stats">
+        <span>🏁 ${done} / ${total} étapes</span>
+        <span>⏱ ${fmtH(remainingMin)} de conversation restantes (sur ${fmtH(totalMin)})</span>
+        <span>🗓 ${remainingSteps ? `fin estimée le <b>${endStr}</b>` : "parcours terminé 🎉"}</span>
+      </div>
+      <div class="gauge-rhythm">
+        <label>Mon rythme :</label>
+        <select id="progRhythmEdit" class="mission-select" style="width:auto">
+          ${Object.entries(RHYTHM_LABELS).map(([v, l]) => `<option value="${v}" ${Number(v) === rhythm ? "selected" : ""}>${l}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+
+    <div class="program-progressbar"><div style="width:${frac * 100}%"></div></div>
     <div id="programSteps"></div>`;
+
+  root.querySelector("#progRhythmEdit").addEventListener("change", (e) => {
+    program.rhythmPerWeek = parseInt(e.target.value, 10) || 5;
+    store.set("program", program);
+    renderProgram();
+  });
 
   const stepsRoot = root.querySelector("#programSteps");
   program.steps.forEach((step, i) => {
@@ -1202,7 +1262,7 @@ function renderProgram() {
     div.innerHTML = `
       <span class="ps-num">${program.completed[i] ? "✓" : i + 1}</span>
       <div class="ps-body">
-        <div class="ps-title">${scen.emoji} <span></span> <span class="lvl-chip">${step.level}</span></div>
+        <div class="ps-title">${scen.emoji} <span></span> <span class="lvl-chip">${step.level}</span> <span class="muted" style="font-weight:400">⏱ ${step.durationMin || 12} min</span></div>
         <div class="ps-meta">🎯 <span></span></div>
         <div class="ps-focus">📌 Point travaillé : <span></span></div>
       </div>
@@ -1245,6 +1305,7 @@ async function generateProgram() {
       ...data.program,
       startLevel,
       targetLevel,
+      rhythmPerWeek: parseInt(document.getElementById("progRhythm").value, 10) || 5,
       completed: data.program.steps.map(() => false),
       createdAt: Date.now(),
     });
@@ -1311,6 +1372,17 @@ function openSettings(errorMsg = "") {
   document.getElementById("accentToggle").checked = store.get("personaAccent", true);
   const v = pickVoice();
   document.getElementById("voiceInfo").textContent = v ? `Voix actuelle : ${v.name}` : "⚠️ Aucune voix anglaise détectée";
+
+  // Accès mobile : URL du tunnel + QR code (visible uniquement depuis le PC)
+  api("/api/tunnel").then((r) => r.json()).then((d) => {
+    const box = document.getElementById("mobileAccess");
+    if (!d.url) { box.hidden = true; return; }
+    box.hidden = false;
+    document.getElementById("tunnelQr").src = d.qr;
+    const a = document.getElementById("tunnelUrl");
+    a.textContent = d.url;
+    a.href = d.url;
+  }).catch(() => {});
 }
 
 document.getElementById("voiceTestBtn").addEventListener("click", () => {

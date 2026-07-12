@@ -426,8 +426,9 @@ const PROGRAM_SCHEMA = {
           level: { type: "string", enum: ["B1", "B2", "C1", "C2"], description: "Niveau CEFR de l'étape (progression du départ vers la cible)" },
           mission: { type: "string", description: "Mission concrète et vérifiable à accomplir pendant la conversation, en français" },
           focus: { type: "string", description: "Le point de langue travaillé en priorité dans cette étape, en français, ex: 'les temps du passé', 'le vocabulaire de la négociation'" },
+          durationMin: { type: "integer", description: "Durée estimée de la conversation en minutes (10 à 20, croissante avec le niveau)" },
         },
-        required: ["title", "scenarioId", "level", "mission", "focus"],
+        required: ["title", "scenarioId", "level", "mission", "focus", "durationMin"],
         additionalProperties: false,
       },
     },
@@ -501,6 +502,26 @@ app.post("/api/key", async (req, res) => {
   }
   setApiKey(key);
   res.json({ ok: true });
+});
+
+// URL publique du tunnel (lue dans tunnel.log écrit par cloudflared) + QR code.
+// Réservé à l'accès local : inutile de révéler l'URL du tunnel… via le tunnel.
+app.get("/api/tunnel", async (req, res) => {
+  if (!["localhost", "127.0.0.1", "::1"].includes(req.hostname)) {
+    return res.status(403).json({ error: "Disponible uniquement depuis le PC." });
+  }
+  try {
+    const logPath = path.join(__dirname, "tunnel.log");
+    if (!fs.existsSync(logPath)) return res.json({ url: null });
+    const log = fs.readFileSync(logPath, "utf-8");
+    const matches = log.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/g);
+    if (!matches) return res.json({ url: null });
+    const url = matches[matches.length - 1];
+    const qr = await require("qrcode").toDataURL(url, { margin: 1, width: 220, color: { dark: "#0e1420", light: "#ffffff" } });
+    res.json({ url, qr });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get("/api/status", (req, res) => {
