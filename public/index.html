@@ -184,6 +184,17 @@
         <span class="switch"></span>
         Utiliser l'accent de l'interlocuteur quand une voix correspondante existe
       </label>
+      <label class="field-label">✨ Voix premium ultra-réalistes <span class="muted" id="ttsProviderInfo"></span></label>
+      <div class="key-row">
+        <select id="ttsProviderSelect" class="mission-select" style="max-width:150px">
+          <option value="elevenlabs">ElevenLabs</option>
+          <option value="openai">OpenAI</option>
+        </select>
+        <input type="password" id="ttsKeyInput" placeholder="Clé API (vide = désactiver)">
+        <button class="cta small" id="ttsKeySaveBtn" style="margin-top:0">OK</button>
+      </div>
+      <p class="muted" style="font-size:0.8rem;margin-top:6px">ElevenLabs : essai gratuit ~10 min/mois sur elevenlabs.io · OpenAI : ~1 €/heure de parole sur platform.openai.com. Sans clé, les voix neurales Edge (gratuites) restent utilisées.</p>
+      <p class="error-text" id="ttsKeyError"></p>
       <label class="field-label">Pause de fin de phrase — temps de silence avant que ta réponse parte</label>
       <select id="pauseSelect" class="mission-select">
         <option value="500">0,5 s — ultra réactif (risque de couper si tu hésites)</option>

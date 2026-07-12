@@ -18,14 +18,18 @@ let client = new Anthropic();
 
 const ENV_PATH = path.join(__dirname, ".env");
 
-function setApiKey(key) {
-  process.env.ANTHROPIC_API_KEY = key;
-  client = new Anthropic({ apiKey: key });
+function saveEnvVar(name, value) {
+  process.env[name] = value;
   let env = "";
   if (fs.existsSync(ENV_PATH)) {
-    env = fs.readFileSync(ENV_PATH, "utf-8").replace(/^ANTHROPIC_API_KEY=.*$/m, "").trim();
+    env = fs.readFileSync(ENV_PATH, "utf-8").replace(new RegExp(`^${name}=.*$`, "m"), "").trim();
   }
-  fs.writeFileSync(ENV_PATH, `ANTHROPIC_API_KEY=${key}\n${env ? env + "\n" : ""}`);
+  fs.writeFileSync(ENV_PATH, `${name}=${value}\n${env ? env + "\n" : ""}`);
+}
+
+function setApiKey(key) {
+  client = new Anthropic({ apiKey: key });
+  saveEnvVar("ANTHROPIC_API_KEY", key);
 }
 
 app.use(express.json({ limit: "1mb" }));
@@ -380,10 +384,109 @@ async function getTtsStream(voice, text, rate) {
   return result.audioStream || result;
 }
 
+// --- Voix premium (optionnelles) : ElevenLabs ou OpenAI, repli automatique sur Edge ---
+
+// Voix ElevenLabs pré-faites correspondant à nos interlocuteurs (accents UK/US/AU
+// disponibles ; les accents IN/ZA/SG restent sur Edge, qui les fait mieux)
+const ELEVEN_VOICES = {
+  "en-GB-SoniaNeural": "Xb7hH8MSUJpSbSDYk0k2",       // Alice — britannique
+  "en-GB-LibbyNeural": "pFZP5JQG7iQjIQuC4Bku",       // Lily — britannique
+  "en-GB-RyanNeural": "JBFqnCBsd6RMkjVDRZzb",        // George — britannique
+  "en-GB-ThomasNeural": "onwK4e9ZLuTAKqWW03F9",      // Daniel — britannique
+  "en-US-JennyNeural": "cgSgspJ2msm6clMCkdW9",       // Jessica — américaine
+  "en-US-AriaNeural": "21m00Tcm4TlvDq8ikWAM",        // Rachel — américaine
+  "en-US-GuyNeural": "nPczCjzI2devNBz1zQrb",         // Brian — américain
+  "en-US-ChristopherNeural": "bIHbv24MWmeRgasZH58o", // Will — américain
+  "en-US-EricNeural": "nPczCjzI2devNBz1zQrb",        // Brian — américain
+  "en-AU-WilliamNeural": "IKne3meq5aSn9XLyUdCD",     // Charlie — australien
+};
+
+// OpenAI gpt-4o-mini-tts : la voix + des instructions de jeu (accent, ton, débit)
+const OPENAI_PACE = {
+  B1: "Speak slowly and very clearly, with simple intonation.",
+  B2: "Speak at a relaxed, natural pace.",
+  C1: "Speak at a natural conversational pace.",
+  C2: "Speak at a brisk, fully natural native pace.",
+};
+const OPENAI_VOICES = {
+  "en-GB-SoniaNeural": ["coral", "British accent (London), warm and friendly woman."],
+  "en-GB-LibbyNeural": ["shimmer", "British accent, cheerful young woman."],
+  "en-GB-RyanNeural": ["echo", "British accent (Manchester), friendly man."],
+  "en-GB-ThomasNeural": ["onyx", "British accent (London), professional man."],
+  "en-US-JennyNeural": ["nova", "American accent, friendly professional woman."],
+  "en-US-AriaNeural": ["coral", "American accent, confident professional woman."],
+  "en-US-GuyNeural": ["ash", "New York American accent, easygoing man."],
+  "en-US-ChristopherNeural": ["onyx", "American accent, calm professional man."],
+  "en-US-EricNeural": ["echo", "American accent, energetic man."],
+  "en-AU-WilliamNeural": ["ash", "Australian accent, laid-back man."],
+  "en-IN-NeerjaNeural": ["nova", "Indian English accent (Mumbai), warm professional woman."],
+  "en-IN-PrabhatNeural": ["onyx", "Indian English accent, courteous professional man."],
+  "en-ZA-LeahNeural": ["shimmer", "South African English accent, friendly woman."],
+  "en-SG-LunaNeural": ["nova", "Singaporean English accent, efficient friendly woman."],
+};
+
+async function elevenTts(voiceId, text, level) {
+  const speed = { B1: 0.85, B2: 0.95, C1: 1.0, C2: 1.1 }[level] || 1.0;
+  const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_64`, {
+    method: "POST",
+    headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      text,
+      model_id: "eleven_flash_v2_5",
+      voice_settings: { stability: 0.5, similarity_boost: 0.75, speed },
+    }),
+  });
+  if (!r.ok) throw new Error("ElevenLabs HTTP " + r.status);
+  return Buffer.from(await r.arrayBuffer());
+}
+
+async function openaiTts(voice, text, level) {
+  const [voiceName, style] = OPENAI_VOICES[voice] || ["coral", "Natural English accent."];
+  const r = await fetch("https://api.openai.com/v1/audio/speech", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "gpt-4o-mini-tts",
+      voice: voiceName,
+      input: text,
+      instructions: `${style} ${OPENAI_PACE[level] || OPENAI_PACE.B2} You are a conversation partner in a language-learning app: sound alive and human.`,
+      response_format: "mp3",
+    }),
+  });
+  if (!r.ok) throw new Error("OpenAI TTS HTTP " + r.status);
+  return Buffer.from(await r.arrayBuffer());
+}
+
+function ttsProvider() {
+  if (process.env.ELEVENLABS_API_KEY) return "elevenlabs";
+  if (process.env.OPENAI_API_KEY) return "openai";
+  return "edge";
+}
+
 app.post("/api/tts", async (req, res) => {
   const { text = "", voice = "en-US-AriaNeural", level = "B2" } = req.body || {};
   if (!text.trim()) return res.status(400).json({ error: "Texte vide." });
   const cleanText = text.slice(0, 2000);
+
+  // 1. Voix premium si une clé est configurée (échec → repli Edge, jamais de silence)
+  try {
+    if (process.env.ELEVENLABS_API_KEY && ELEVEN_VOICES[voice]) {
+      const buf = await elevenTts(ELEVEN_VOICES[voice], cleanText, level);
+      res.setHeader("Content-Type", "audio/mpeg");
+      res.setHeader("Cache-Control", "no-store");
+      return res.send(buf);
+    }
+    if (process.env.OPENAI_API_KEY) {
+      const buf = await openaiTts(voice, cleanText, level);
+      res.setHeader("Content-Type", "audio/mpeg");
+      res.setHeader("Cache-Control", "no-store");
+      return res.send(buf);
+    }
+  } catch (err) {
+    console.error("Voix premium indisponible, repli Edge :", err.message);
+  }
+
+  // 2. Voix neurales Edge (gratuites)
   const rate = TTS_RATES[level] || "+0%";
   try {
     let stream;
@@ -402,6 +505,33 @@ app.post("/api/tts", async (req, res) => {
     console.error("Erreur TTS:", err.message);
     ttsPool.delete(voice);
     res.status(500).json({ error: "Synthèse vocale indisponible : " + err.message });
+  }
+});
+
+// Enregistre une clé de voix premium (saisie par l'utilisateur dans les réglages)
+app.post("/api/ttskey", async (req, res) => {
+  const provider = (req.body?.provider || "").trim();
+  const key = (req.body?.key || "").trim();
+  if (!["elevenlabs", "openai"].includes(provider)) return res.status(400).json({ error: "Fournisseur inconnu." });
+  if (!key) {
+    // Champ vide = désactiver ce fournisseur
+    saveEnvVar(provider === "elevenlabs" ? "ELEVENLABS_API_KEY" : "OPENAI_API_KEY", "");
+    delete process.env[provider === "elevenlabs" ? "ELEVENLABS_API_KEY" : "OPENAI_API_KEY"];
+    return res.json({ ok: true, ttsProvider: ttsProvider() });
+  }
+  try {
+    if (provider === "elevenlabs") {
+      const r = await fetch("https://api.elevenlabs.io/v1/user", { headers: { "xi-api-key": key } });
+      if (!r.ok) return res.status(401).json({ error: "Clé ElevenLabs refusée (HTTP " + r.status + ")." });
+      saveEnvVar("ELEVENLABS_API_KEY", key);
+    } else {
+      const r = await fetch("https://api.openai.com/v1/models", { headers: { Authorization: `Bearer ${key}` } });
+      if (!r.ok) return res.status(401).json({ error: "Clé OpenAI refusée (HTTP " + r.status + ")." });
+      saveEnvVar("OPENAI_API_KEY", key);
+    }
+    res.json({ ok: true, ttsProvider: ttsProvider() });
+  } catch (err) {
+    res.status(500).json({ error: "Validation impossible : " + err.message });
   }
 });
 
@@ -528,6 +658,7 @@ app.get("/api/status", (req, res) => {
   res.json({
     model: MODEL,
     keyConfigured: Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN),
+    ttsProvider: ttsProvider(),
   });
 });
 

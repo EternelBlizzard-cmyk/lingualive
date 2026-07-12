@@ -1366,6 +1366,8 @@ function openSettings(errorMsg = "") {
     document.getElementById("keyStatus").textContent = s.keyConfigured
       ? `✓ Clé API configurée · modèle : ${s.model}`
       : "Aucune clé API configurée — colle ta clé Anthropic ci-dessous.";
+    const labels = { elevenlabs: "✓ ElevenLabs actif", openai: "✓ OpenAI actif", edge: "(actuellement : voix Edge gratuites)" };
+    document.getElementById("ttsProviderInfo").textContent = labels[s.ttsProvider] || "";
   }).catch(() => {});
   loadVoices();
   document.getElementById("pauseSelect").value = String(state.pauseMs);
@@ -1407,6 +1409,28 @@ document.getElementById("voiceSelect").addEventListener("change", (e) => {
   store.set("voice", chosenVoiceURI);
   const v = voices.find((v) => v.voiceURI === chosenVoiceURI);
   if (v) speak("Hello! This is how I sound.");
+});
+
+document.getElementById("ttsKeySaveBtn").addEventListener("click", async () => {
+  const err = document.getElementById("ttsKeyError");
+  err.textContent = "";
+  try {
+    const res = await api("/api/ttskey", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: document.getElementById("ttsProviderSelect").value,
+        key: document.getElementById("ttsKeyInput").value.trim(),
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) { err.textContent = data.error; return; }
+    document.getElementById("ttsKeyInput").value = "";
+    openSettings();
+    speak("Hello! Here is my new voice. Quite an upgrade, don't you think?");
+  } catch (e) {
+    err.textContent = "Connexion impossible : " + e.message;
+  }
 });
 
 document.getElementById("keySaveBtn").addEventListener("click", async () => {
