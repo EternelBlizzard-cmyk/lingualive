@@ -521,8 +521,20 @@ app.post("/api/ttskey", async (req, res) => {
   }
   try {
     if (provider === "elevenlabs") {
-      const r = await fetch("https://api.elevenlabs.io/v1/user", { headers: { "xi-api-key": key } });
-      if (!r.ok) return res.status(401).json({ error: "Clé ElevenLabs refusée (HTTP " + r.status + ")." });
+      // On valide en générant réellement un mini-échantillon : c'est la permission
+      // "Text to Speech" qui compte (les clés restreintes échouent sur /v1/user)
+      const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM?output_format=mp3_22050_32`, {
+        method: "POST",
+        headers: { "xi-api-key": key, "Content-Type": "application/json" },
+        body: JSON.stringify({ text: "Hi!", model_id: "eleven_flash_v2_5" }),
+      });
+      if (!r.ok) {
+        const detail = await r.text().catch(() => "");
+        console.error("Validation ElevenLabs:", r.status, detail.slice(0, 300));
+        return res.status(401).json({
+          error: `Clé ElevenLabs refusée (HTTP ${r.status}). Vérifie qu'elle est complète et que la permission « Text to Speech » est activée sur la clé (ou crée une clé sans restrictions).`,
+        });
+      }
       saveEnvVar("ELEVENLABS_API_KEY", key);
     } else {
       const r = await fetch("https://api.openai.com/v1/models", { headers: { Authorization: `Bearer ${key}` } });
