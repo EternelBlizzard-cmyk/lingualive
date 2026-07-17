@@ -338,7 +338,19 @@ function initRecognition() {
       const msg = "⚠️ Micro bloqué par le navigateur — clique sur l'icône 🔒/🎤 dans la barre d'adresse et autorise le micro.";
       document.getElementById("interimText").textContent = msg;
       if (callOpen()) document.getElementById("callCaption").textContent = msg;
-    } else if (e.error !== "no-speech" && e.error !== "aborted") {
+    } else if (e.error === "aborted") {
+      // Un seul onglet peut utiliser la reconnaissance vocale : des "aborted" en
+      // rafale = un autre onglet LinguaLive ouvert nous vole le micro en boucle
+      abortStreak.push(Date.now());
+      abortStreak = abortStreak.filter((t) => Date.now() - t < 10000);
+      if (abortStreak.length >= 3 && !document.hidden) {
+        wantListening = false;
+        const msg = "⚠️ Le micro est disputé par un autre onglet/fenêtre LinguaLive ouvert. Ferme les doublons (onglets et appli installée), puis clique sur le micro.";
+        document.getElementById("interimText").textContent = msg;
+        if (callOpen()) { document.getElementById("callCaption").textContent = msg; setCallState("", undefined); }
+        abortStreak = [];
+      }
+    } else if (e.error !== "no-speech") {
       // Erreur passagère (network…) : on l'affiche et la relance auto fera le reste
       document.getElementById("interimText").textContent = `⚠️ micro : ${e.error} — reconnexion…`;
     }
@@ -348,10 +360,27 @@ function initRecognition() {
   setInterval(() => {
     if (wantListening && !listening && state.inSession && !state.busy) tryRestartMic();
   }, 3000);
+
+  // Le micro n'appartient qu'à l'onglet visible : en arrière-plan on le lâche,
+  // et on le reprend automatiquement quand l'onglet redevient actif
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      if (wantListening || listening) {
+        micPausedByHide = true;
+        stopListening();
+      }
+    } else if (micPausedByHide && state.inSession && !state.busy) {
+      micPausedByHide = false;
+      startListening();
+    }
+  });
 }
 
+let abortStreak = [];
+let micPausedByHide = false;
+
 function tryRestartMic() {
-  if (!recognition || !wantListening || listening || state.busy) return;
+  if (!recognition || !wantListening || listening || state.busy || document.hidden) return;
   try {
     recognition.start();
     listening = true;
@@ -379,6 +408,7 @@ function finishUtterance() {
 
 function startListening() {
   if (!recognition || state.busy) return;
+  if (document.hidden) { micPausedByHide = true; return; } // repris au retour sur l'onglet
   stopAudio();
   wantListening = true;
   finalBuffer = "";
