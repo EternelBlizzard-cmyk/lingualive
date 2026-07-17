@@ -326,17 +326,38 @@ function initRecognition() {
   recognition.onend = () => {
     listening = false;
     document.getElementById("micBtn").classList.remove("listening");
-    // Le moteur s'arrête parfois seul (long silence) : on le relance si l'écoute est souhaitée
+    // Le moteur s'arrête parfois seul (long silence, erreur réseau) : relance différée
+    // — un redémarrage immédiat après un arrêt échoue souvent (InvalidStateError)
     if (wantListening && state.inSession && !state.busy) {
-      try { recognition.start(); listening = true; document.getElementById("micBtn").classList.add("listening"); } catch {}
+      setTimeout(tryRestartMic, 300);
     }
   };
   recognition.onerror = (e) => {
-    if (e.error === "not-allowed") {
+    if (e.error === "not-allowed" || e.error === "service-not-allowed") {
       wantListening = false;
-      document.getElementById("interimText").textContent = "⚠️ Autorise le micro dans le navigateur pour parler.";
+      const msg = "⚠️ Micro bloqué par le navigateur — clique sur l'icône 🔒/🎤 dans la barre d'adresse et autorise le micro.";
+      document.getElementById("interimText").textContent = msg;
+      if (callOpen()) document.getElementById("callCaption").textContent = msg;
+    } else if (e.error !== "no-speech" && e.error !== "aborted") {
+      // Erreur passagère (network…) : on l'affiche et la relance auto fera le reste
+      document.getElementById("interimText").textContent = `⚠️ micro : ${e.error} — reconnexion…`;
     }
   };
+
+  // Chien de garde : si l'écoute est souhaitée mais que le moteur est tombé, on le relève
+  setInterval(() => {
+    if (wantListening && !listening && state.inSession && !state.busy) tryRestartMic();
+  }, 3000);
+}
+
+function tryRestartMic() {
+  if (!recognition || !wantListening || listening || state.busy) return;
+  try {
+    recognition.start();
+    listening = true;
+    document.getElementById("micBtn").classList.add("listening");
+    setCallState("listening");
+  } catch { /* le prochain passage du chien de garde retentera */ }
 }
 
 // (Re)démarre le compte à rebours de fin de phrase : tant que tu parles, il est repoussé
@@ -364,8 +385,14 @@ function startListening() {
   pendingAlts = [];
   document.getElementById("interimText").textContent = "";
   if (!listening) {
-    try { recognition.start(); } catch { return; }
-    listening = true;
+    try {
+      recognition.start();
+      listening = true;
+    } catch {
+      // Moteur pas encore libéré : nouvel essai imminent (puis chien de garde)
+      setTimeout(tryRestartMic, 350);
+      return;
+    }
   }
   document.getElementById("micBtn").classList.add("listening");
   setCallState("listening", "");
