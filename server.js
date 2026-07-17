@@ -119,13 +119,13 @@ const LEVEL_GUIDE = {
   C2: "Speak as with a native professional: fast-paced, idiomatic, culturally loaded references, irony, complex argumentation. Challenge the learner intellectually.",
 };
 
-function turnSystemPrompt({ scenario, level, mission, knownErrors, persona }) {
-  return `You are LinguaLive, an English conversation partner and language coach for a French-speaking learner.
+function turnSystemPrompt({ scenario, level, mission, knownErrors, persona, language = "English" }) {
+  return `You are LinguaLive, a ${language} conversation partner and language coach for a French-speaking learner. The entire conversation is in ${language}.
 
 ROLE-PLAY
 You are playing this character, realistically and consistently: ${persona ? `${persona.name}, from ${persona.origin} — ` : ""}${scenario.role}
 Setting: ${scenario.setting}
-${persona ? `Stay ${persona.name} throughout. Use turns of phrase, vocabulary and cultural references typical of ${persona.origin} English speakers.` : ""}
+${persona ? `Stay ${persona.name} throughout. Use turns of phrase, vocabulary and cultural references typical of ${language} speakers from ${persona.origin}.` : ""}
 ${mission ? `The learner has a mission to accomplish in this conversation: "${mission}". Give them realistic opportunities to achieve it (including obstacles or objections when the scenario calls for it), and mark missionStatus "accomplished" as soon as they clearly succeed.` : "No specific mission: keep a lively, engaging conversation going within the scenario."}
 
 LEVEL — CEFR ${level}
@@ -143,7 +143,7 @@ ${knownErrors && knownErrors.length ? `- The learner's recurring weaknesses: ${k
 }
 
 app.post("/api/turn", async (req, res) => {
-  const { scenario, level = "B2", mission = "", history = [], userText = "", knownErrors = [], alternatives = [], persona = null } = req.body || {};
+  const { scenario, level = "B2", mission = "", history = [], userText = "", knownErrors = [], alternatives = [], persona = null, language = "English" } = req.body || {};
   if (!scenario || !scenario.role) return res.status(400).json({ error: "Scénario manquant." });
   if (!userText.trim()) return res.status(400).json({ error: "Message vide." });
 
@@ -160,7 +160,7 @@ app.post("/api/turn", async (req, res) => {
     const message = await client.messages.create({
       model: MODEL,
       max_tokens: 2000,
-      system: turnSystemPrompt({ scenario, level, mission, knownErrors, persona }),
+      system: turnSystemPrompt({ scenario, level, mission, knownErrors, persona, language }),
       output_config: { format: { type: "json_schema", schema: TURN_SCHEMA } },
       messages,
     });
@@ -220,7 +220,7 @@ const DEBRIEF_SCHEMA = {
 };
 
 app.post("/api/debrief", async (req, res) => {
-  const { scenario, level = "B2", mission = "", history = [], corrections = [] } = req.body || {};
+  const { scenario, level = "B2", mission = "", history = [], corrections = [], language = "English", languageFr = "anglais" } = req.body || {};
   if (!history.length) return res.status(400).json({ error: "Aucune conversation à analyser." });
 
   const transcript = history
@@ -230,7 +230,7 @@ app.post("/api/debrief", async (req, res) => {
     .map((c) => `- [${c.type}] "${c.original}" → "${c.corrected}" (${c.explanation})`)
     .join("\n");
 
-  const prompt = `Session de conversation en anglais terminée. Analyse la production de l'apprenant.
+  const prompt = `Session de conversation en ${languageFr} terminée. Analyse la production de l'apprenant.
 
 Scénario : ${scenario?.label || "conversation libre"} — ${scenario?.setting || ""}
 Niveau choisi : ${level}${mission ? `\nMission : ${mission}` : ""}
@@ -247,7 +247,7 @@ ${corrList || "(aucune)"}`;
       max_tokens: 8000,
       thinking: { type: "adaptive" },
       system:
-        "Tu es un professeur d'anglais expérimenté, spécialiste des apprenants francophones. Tu produis un débrief de session honnête, précis et actionnable. Tu t'appuies uniquement sur ce qui s'est réellement passé dans le transcript.",
+        `Tu es un professeur de ${languageFr} (${language}) expérimenté, spécialiste des apprenants francophones. Tu produis un débrief de session honnête, précis et actionnable. Tu t'appuies uniquement sur ce qui s'est réellement passé dans le transcript.`,
       output_config: { format: { type: "json_schema", schema: DEBRIEF_SCHEMA } },
       messages: [{ role: "user", content: prompt }],
     });
@@ -266,12 +266,12 @@ ${corrList || "(aucune)"}`;
 
 const FAST_MODEL = process.env.LINGUALIVE_FAST_MODEL || "claude-haiku-4-5-20251001";
 
-function replySystemPrompt({ scenario, level, mission, persona }) {
-  return `You are an English conversation partner for a French-speaking learner. Role-play only — no coaching, no corrections, no meta-comments.
+function replySystemPrompt({ scenario, level, mission, persona, language = "English" }) {
+  return `You are a ${language} conversation partner for a French-speaking learner. The conversation is entirely in ${language}. Role-play only — no coaching, no corrections, no meta-comments.
 
 You are: ${persona ? `${persona.name}, from ${persona.origin} — ` : ""}${scenario.role}
 Setting: ${scenario.setting}
-${persona ? `Use turns of phrase typical of ${persona.origin} English speakers.` : ""}
+${persona ? `Use turns of phrase typical of ${language} speakers from ${persona.origin}.` : ""}
 ${mission ? `The learner is trying to accomplish: "${mission}". Give them realistic opportunities (including light obstacles).` : ""}
 
 CEFR ${level}: ${LEVEL_GUIDE[level] || LEVEL_GUIDE.B2}
@@ -284,7 +284,7 @@ Rules:
 }
 
 app.post("/api/reply", async (req, res) => {
-  const { scenario, level = "B2", mission = "", history = [], userText = "", alternatives = [], persona = null } = req.body || {};
+  const { scenario, level = "B2", mission = "", history = [], userText = "", alternatives = [], persona = null, language = "English" } = req.body || {};
   if (!scenario || !scenario.role) return res.status(400).json({ error: "Scénario manquant." });
   if (!userText.trim()) return res.status(400).json({ error: "Message vide." });
 
@@ -301,7 +301,7 @@ app.post("/api/reply", async (req, res) => {
     const message = await client.messages.create({
       model: FAST_MODEL,
       max_tokens: 300,
-      system: replySystemPrompt({ scenario, level, mission, persona }),
+      system: replySystemPrompt({ scenario, level, mission, persona, language }),
       messages,
     });
     const textBlock = message.content.find((b) => b.type === "text");
@@ -326,7 +326,7 @@ const COACH_SCHEMA = {
 };
 
 app.post("/api/coach", async (req, res) => {
-  const { scenario, level = "B2", mission = "", history = [], userText = "", alternatives = [], knownErrors = [] } = req.body || {};
+  const { scenario, level = "B2", mission = "", history = [], userText = "", alternatives = [], knownErrors = [], language = "English" } = req.body || {};
   if (!userText.trim()) return res.status(400).json({ error: "Message vide." });
 
   const transcript = history
@@ -341,7 +341,7 @@ ${transcript || "(start of conversation)"}
 LEARNER's new utterance to analyse:
 ${userText.trim()}${alts.length ? `\n[speech recognition alternatives for the same words: ${alts.join(" | ")}]` : ""}`;
 
-  const system = `You are an English coach for a French-speaking learner. Analyse ONLY the learner's new utterance.
+  const system = `You are a ${language} coach for a French-speaking learner. The learner speaks in ${language}. Analyse ONLY the learner's new utterance.
 - It comes from speech recognition: no punctuation, occasional mis-transcribed homophones. Never correct punctuation/capitalization. Use the bracketed alternatives (the learner typed none of this) and the context to infer what was really said; do not flag transcription artifacts as errors.
 - Report every real error in "corrections" (explanation in French, 1 sentence). No error → empty array. Never invent errors.
 - "nativeVersion": natural native phrasing if their sentence was clunky; empty string if already natural.
@@ -423,6 +423,15 @@ const OPENAI_VOICES = {
   "en-IN-PrabhatNeural": ["onyx", "Indian English accent, courteous professional man."],
   "en-ZA-LeahNeural": ["shimmer", "South African English accent, friendly woman."],
   "en-SG-LunaNeural": ["nova", "Singaporean English accent, efficient friendly woman."],
+  "es-ES-ElviraNeural": ["coral", "Castilian Spanish from Madrid, warm expressive woman. Speak Spanish."],
+  "es-MX-JorgeNeural": ["onyx", "Mexican Spanish from Mexico City, friendly man. Speak Spanish."],
+  "es-AR-ElenaNeural": ["nova", "Argentinian Spanish from Buenos Aires, lively woman. Speak Spanish."],
+  "de-DE-KatjaNeural": ["coral", "Standard German from Berlin, warm professional woman. Speak German."],
+  "de-DE-ConradNeural": ["onyx", "Standard German from Munich, calm friendly man. Speak German."],
+  "de-AT-IngridNeural": ["shimmer", "Austrian German from Vienna, cheerful woman. Speak German."],
+  "it-IT-ElsaNeural": ["coral", "Italian from Rome, warm expressive woman. Speak Italian."],
+  "it-IT-DiegoNeural": ["echo", "Italian from Milan, energetic man. Speak Italian."],
+  "it-IT-IsabellaNeural": ["nova", "Italian from Naples, lively friendly woman. Speak Italian."],
 };
 
 async function elevenTts(voiceId, text, level) {
@@ -620,15 +629,15 @@ const PROGRAM_SCHEMA = {
 };
 
 app.post("/api/program", async (req, res) => {
-  const { startLevel = "B1", targetLevel = "C1", priorities = "" } = req.body || {};
+  const { startLevel = "B1", targetLevel = "C1", priorities = "", languageFr = "anglais" } = req.body || {};
 
-  const prompt = `Crée un parcours de progression en anglais ORAL, du niveau ${startLevel} au niveau ${targetLevel}.
+  const prompt = `Crée un parcours de progression en ${languageFr} ORAL, du niveau ${startLevel} au niveau ${targetLevel}.
 
 Contraintes pédagogiques :
 - 16 à 24 étapes de conversation, chacune réalisable en 10-15 minutes de dialogue.
 - Progression réaliste : on démarre confortablement à ${startLevel}, on termine sur des étapes exigeantes de niveau ${targetLevel}.
 - Varier les contextes (quotidien, business, entretien, rendez-vous/services, présentation client, conversation libre) avec une dominante professionnelle en seconde moitié.
-- Chaque étape a UNE mission concrète (accomplissable et vérifiable en conversation) et UN point de langue prioritaire (grammaire, lexique, registre ou stratégie de discours) — les points de langue doivent couvrir les difficultés classiques des francophones (for/since, present perfect, prépositions, faux amis, phrasal verbs, conditionnels, registre formel/informel...).
+- Chaque étape a UNE mission concrète (accomplissable et vérifiable en conversation) et UN point de langue prioritaire (grammaire, lexique, registre ou stratégie de discours) — les points de langue doivent couvrir les difficultés classiques des francophones dans cette langue (temps verbaux, prépositions, faux amis, tournures idiomatiques, registre formel/informel...).
 - Les 2-3 dernières étapes sont des synthèses de haut niveau (présentation à enjeu, entretien difficile, débat).${priorities ? `\n- Priorités exprimées par l'apprenant : ${priorities}` : ""}`;
 
   try {

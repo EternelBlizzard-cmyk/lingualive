@@ -1,5 +1,14 @@
 "use strict";
 
+/* ═══════════════ Langues disponibles ═══════════════ */
+
+const LANGS = {
+  en: { flag: "🇬🇧", label: "Anglais", labelFr: "anglais", name: "English" },
+  es: { flag: "🇪🇸", label: "Espagnol", labelFr: "espagnol", name: "Spanish" },
+  de: { flag: "🇩🇪", label: "Allemand", labelFr: "allemand", name: "German" },
+  it: { flag: "🇮🇹", label: "Italien", labelFr: "italien", name: "Italian" },
+};
+
 /* ═══════════════ Données des scénarios ═══════════════ */
 
 const SCENARIOS = [
@@ -49,6 +58,7 @@ const SCENARIOS = [
       "Ouvrir un compte bancaire et poser les bonnes questions",
       "Te plaindre (poliment) d'une chambre d'hôtel décevante et obtenir mieux",
       "Reprogrammer un rendez-vous à cause d'un imprévu",
+      "Appeler les urgences et décrire la situation avec calme et précision",
     ],
   },
   {
@@ -61,6 +71,18 @@ const SCENARIOS = [
       "Répondre à l'objection « c'est trop cher » sans baisser le prix",
       "Reprendre la main après une question déstabilisante",
       "Conclure la réunion en obtenant un prochain rendez-vous",
+    ],
+  },
+  {
+    id: "exam", emoji: "📝", label: "Examens & certifications",
+    desc: "Un examinateur officiel te fait passer une épreuve orale type IELTS, TOEIC ou entretien visa.",
+    role: "an official examiner conducting an oral language exam (IELTS/TOEFL speaking style, or a visa/immigration interview officer — pick the one matching the mission). Structured questions, follow-ups on vague answers, neutral but fair tone, keep strict exam timing",
+    setting: "an official speaking examination or formal interview",
+    missions: [
+      "Épreuve type IELTS Part 2 : parler 2 minutes sur un sujet imposé sans t'arrêter",
+      "Épreuve type IELTS Part 3 : débattre en profondeur avec l'examinateur",
+      "Entretien visa/immigration : justifier ton projet avec précision et calme",
+      "Répondre à 5 questions rapides type TOEIC speaking sans temps mort",
     ],
   },
   {
@@ -103,12 +125,40 @@ const PERSONAS = {
     { name: "Charlotte", flag: "🇬🇧", origin: "London, UK", lang: "en-GB", ttsVoice: "en-GB-SoniaNeural" },
     { name: "Raj", flag: "🇮🇳", origin: "Bangalore, India", lang: "en-IN", ttsVoice: "en-IN-PrabhatNeural" },
   ],
+  exam: [
+    { name: "Margaret", flag: "🇬🇧", origin: "London, UK", lang: "en-GB", ttsVoice: "en-GB-SoniaNeural" },
+    { name: "Steven", flag: "🇺🇸", origin: "Washington DC, USA", lang: "en-US", ttsVoice: "en-US-EricNeural" },
+    { name: "Anjali", flag: "🇮🇳", origin: "New Delhi, India", lang: "en-IN", ttsVoice: "en-IN-NeerjaNeural" },
+  ],
   free: [
     { name: "Alex", flag: "🇺🇸", origin: "Seattle, USA", lang: "en-US", ttsVoice: "en-US-GuyNeural" },
     { name: "Sophie", flag: "🇬🇧", origin: "Bristol, UK", lang: "en-GB", ttsVoice: "en-GB-LibbyNeural" },
     { name: "Noah", flag: "🇦🇺", origin: "Melbourne, Australia", lang: "en-AU", ttsVoice: "en-AU-WilliamNeural" },
   ],
 };
+
+// Interlocuteurs des autres langues (communs à tous les contextes)
+const LANG_PERSONAS = {
+  es: [
+    { name: "Lucía", flag: "🇪🇸", origin: "Madrid, Spain", lang: "es-ES", ttsVoice: "es-ES-ElviraNeural" },
+    { name: "Diego", flag: "🇲🇽", origin: "Mexico City, Mexico", lang: "es-MX", ttsVoice: "es-MX-JorgeNeural" },
+    { name: "Valentina", flag: "🇦🇷", origin: "Buenos Aires, Argentina", lang: "es-AR", ttsVoice: "es-AR-ElenaNeural" },
+  ],
+  de: [
+    { name: "Katja", flag: "🇩🇪", origin: "Berlin, Germany", lang: "de-DE", ttsVoice: "de-DE-KatjaNeural" },
+    { name: "Jonas", flag: "🇩🇪", origin: "Munich, Germany", lang: "de-DE", ttsVoice: "de-DE-ConradNeural" },
+    { name: "Emilia", flag: "🇦🇹", origin: "Vienna, Austria", lang: "de-AT", ttsVoice: "de-AT-IngridNeural" },
+  ],
+  it: [
+    { name: "Giulia", flag: "🇮🇹", origin: "Rome, Italy", lang: "it-IT", ttsVoice: "it-IT-ElsaNeural" },
+    { name: "Marco", flag: "🇮🇹", origin: "Milan, Italy", lang: "it-IT", ttsVoice: "it-IT-DiegoNeural" },
+    { name: "Sofia", flag: "🇮🇹", origin: "Naples, Italy", lang: "it-IT", ttsVoice: "it-IT-IsabellaNeural" },
+  ],
+};
+
+function personasFor(scenarioId) {
+  return state.lang === "en" ? (PERSONAS[scenarioId] || []) : (LANG_PERSONAS[state.lang] || []);
+}
 
 const TYPE_LABELS = { grammar: "Grammaire", vocabulary: "Vocabulaire", register: "Registre", structure: "Structure" };
 const SRS_INTERVALS = [0, 1, 3, 7, 14, 30]; // jours entre révisions selon le niveau de maîtrise
@@ -146,6 +196,7 @@ async function api(path, opts = {}) {
 
 const state = {
   scenario: SCENARIOS[0],
+  lang: store.get("lang", "en"),
   persona: PERSONAS.daily[0],
   level: "B2",
   mission: "",
@@ -167,7 +218,8 @@ let voices = [];
 let chosenVoiceURI = store.get("voice", null);
 
 function loadVoices() {
-  voices = speechSynthesis.getVoices().filter((v) => v.lang.startsWith("en"));
+  // Toutes les voix (l'appli est multilingue) ; pickVoice choisit selon l'interlocuteur
+  voices = speechSynthesis.getVoices();
   const sel = document.getElementById("voiceSelect");
   sel.innerHTML = voices.map((v) =>
     `<option value="${v.voiceURI}" ${v.voiceURI === chosenVoiceURI ? "selected" : ""}>${v.name} (${v.lang})</option>`
@@ -176,11 +228,15 @@ function loadVoices() {
 speechSynthesis.onvoiceschanged = loadVoices;
 
 function pickVoice() {
-  // 1. Accent de l'interlocuteur choisi (voix « naturelles » d'Edge en priorité)
+  // 1. Accent de l'interlocuteur choisi (voix « naturelles » d'Edge en priorité),
+  //    sinon n'importe quelle voix de la même langue de base (es, de, it…)
   const lang = state.inSession && state.persona && store.get("personaAccent", true) ? state.persona.lang : null;
   if (lang) {
+    const base = lang.split("-")[0];
     const match = voices.find((v) => /natural/i.test(v.name) && v.lang === lang)
-      || voices.find((v) => v.lang === lang);
+      || voices.find((v) => v.lang === lang)
+      || voices.find((v) => /natural/i.test(v.name) && v.lang.startsWith(base))
+      || voices.find((v) => v.lang.startsWith(base));
     if (match) return match;
   }
   // 2. Voix choisie manuellement dans les réglages
@@ -537,6 +593,11 @@ document.getElementById("mainTabs").addEventListener("click", (e) => {
 /* ═══════════════ Écran de configuration ═══════════════ */
 
 function renderSetup() {
+  const langRow = document.getElementById("langRow");
+  langRow.innerHTML = Object.entries(LANGS).map(([code, l]) => `
+    <button class="level-pill ${code === state.lang ? "active" : ""}" data-lang="${code}">
+      <strong>${l.flag}</strong><span>${l.label}</span>
+    </button>`).join("");
   const grid = document.getElementById("scenarioGrid");
   grid.innerHTML = SCENARIOS.map((s) => `
     <button class="scenario-card ${s.id === state.scenario.id ? "active" : ""}" data-id="${s.id}">
@@ -550,7 +611,7 @@ function renderSetup() {
 
 function renderPersonas() {
   const row = document.getElementById("personaRow");
-  const list = PERSONAS[state.scenario.id] || [];
+  const list = personasFor(state.scenario.id);
   if (!list.some((p) => p.name === state.persona?.name)) state.persona = list[0];
   row.innerHTML = list.map((p) => `
     <button class="persona-card ${p.name === state.persona?.name ? "active" : ""}" data-name="${p.name}">
@@ -562,7 +623,7 @@ function renderPersonas() {
 document.getElementById("personaRow").addEventListener("click", (e) => {
   const card = e.target.closest(".persona-card");
   if (!card) return;
-  state.persona = (PERSONAS[state.scenario.id] || []).find((p) => p.name === card.dataset.name);
+  state.persona = personasFor(state.scenario.id).find((p) => p.name === card.dataset.name);
   renderPersonas();
 });
 
@@ -571,6 +632,15 @@ function renderMissions() {
   sel.innerHTML = `<option value="">Pas de mission — conversation ouverte</option>` +
     state.scenario.missions.map((m) => `<option value="${m.replace(/"/g, "&quot;")}">🎯 ${m}</option>`).join("");
 }
+
+document.getElementById("langRow").addEventListener("click", (e) => {
+  const pill = e.target.closest(".level-pill");
+  if (!pill) return;
+  state.lang = pill.dataset.lang;
+  store.set("lang", state.lang);
+  state.persona = personasFor(state.scenario.id)[0];
+  renderSetup();
+});
 
 document.getElementById("scenarioGrid").addEventListener("click", (e) => {
   const card = e.target.closest(".scenario-card");
@@ -598,8 +668,8 @@ async function startSession(opts = {}) {
   if (opts.scenario) state.scenario = opts.scenario;
   if (opts.level) state.level = opts.level;
   if (opts.persona !== undefined) state.persona = opts.persona;
-  if (!(PERSONAS[state.scenario.id] || []).some((p) => p.name === state.persona?.name)) {
-    state.persona = (PERSONAS[state.scenario.id] || [])[0];
+  if (!personasFor(state.scenario.id).some((p) => p.name === state.persona?.name)) {
+    state.persona = personasFor(state.scenario.id)[0];
   }
   state.mission = opts.mission !== undefined ? opts.mission : document.getElementById("missionSelect").value;
   state.handsFree = document.getElementById("handsFreeToggle").checked;
@@ -610,6 +680,8 @@ async function startSession(opts = {}) {
   state.inSession = true;
   state.drillMode = !!opts.drill;
   state.programStepIndex = opts.programStep ?? null;
+  // La reconnaissance écoute dans la langue (et la variante régionale) de l'interlocuteur
+  if (recognition) recognition.lang = state.persona?.lang || (state.lang === "en" ? "en-US" : state.lang);
 
   document.getElementById("chatScenario").textContent = `${state.scenario.emoji} ${state.scenario.label}`;
   document.getElementById("chatLevel").textContent = state.level;
@@ -726,6 +798,7 @@ async function sendTurn(userText, opts = {}) {
   const payload = JSON.stringify({
     scenario: { role: state.scenario.role, setting: state.scenario.setting, label: state.scenario.label },
     persona: state.persona ? { name: state.persona.name, origin: state.persona.origin } : null,
+    language: LANGS[state.lang]?.name || "English",
     level: state.level,
     mission: state.mission,
     history: state.history.slice(),
@@ -848,6 +921,8 @@ async function endSession() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         scenario: { label: state.scenario.label, setting: state.scenario.setting },
+        language: LANGS[state.lang]?.name || "English",
+        languageFr: LANGS[state.lang]?.labelFr || "anglais",
         level: state.level,
         mission: state.mission,
         history: state.history,
@@ -918,6 +993,7 @@ function saveSession(debrief) {
     date: new Date().toISOString(),
     scenario: state.scenario.label,
     emoji: state.scenario.emoji,
+    lang: state.lang,
     persona: state.persona ? `${state.persona.flag} ${state.persona.name}` : "",
     level: state.level,
     mission: state.mission,
@@ -944,7 +1020,7 @@ function saveSession(debrief) {
   const vocab = store.get("vocab", []);
   for (const v of state.vocabSeen) {
     if (!vocab.some((x) => x.term.toLowerCase() === v.term.toLowerCase())) {
-      vocab.push({ ...v, context: state.scenario.label, box: 0, due: Date.now(), added: Date.now() });
+      vocab.push({ ...v, context: state.scenario.label, lang: state.lang, box: 0, due: Date.now(), added: Date.now() });
     }
   }
   store.set("vocab", vocab);
@@ -1054,7 +1130,8 @@ function showReviewCard(panel) {
     <div class="rc-example" hidden></div>
     <div class="review-actions"></div>`;
   card.querySelector(".rc-fr").textContent = item.translation;
-  card.querySelector(".rc-ctx").textContent = "Comment dit-on ça en anglais ? · contexte : " + item.context;
+  card.querySelector(".rc-ctx").textContent =
+    `Comment dit-on ça en ${LANGS[item.lang]?.labelFr || "anglais"} ? · contexte : ${item.context}`;
   card.querySelector(".rc-answer").textContent = item.term;
   card.querySelector(".rc-example").textContent = item.example;
 
@@ -1141,7 +1218,7 @@ function renderProgress() {
       <span class="s-scen"></span>
       <span class="muted">${s.turns} tours · ${s.errors} corr.</span>
       <span class="s-cefr">${s.cefr || ""}</span>${s.messages?.length ? '<span class="muted">📜</span>' : ""}`;
-    row.querySelector(".s-scen").textContent = `${s.emoji} ${s.scenario}${s.persona ? " · " + s.persona : ""}${s.missionDone ? " · 🎯✓" : ""}`;
+    row.querySelector(".s-scen").textContent = `${s.lang && s.lang !== "en" ? LANGS[s.lang]?.flag + " " : ""}${s.emoji} ${s.scenario}${s.persona ? " · " + s.persona : ""}${s.missionDone ? " · 🎯✓" : ""}`;
     if (s.messages?.length) row.onclick = () => openTranscript(s);
     rows.appendChild(row);
   }
@@ -1354,7 +1431,12 @@ async function generateProgram() {
     const res = await api("/api/program", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ startLevel, targetLevel, priorities: document.getElementById("progPriorities").value.trim() }),
+      body: JSON.stringify({
+        startLevel,
+        targetLevel,
+        priorities: document.getElementById("progPriorities").value.trim(),
+        languageFr: LANGS[state.lang]?.labelFr || "anglais",
+      }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Erreur serveur");
