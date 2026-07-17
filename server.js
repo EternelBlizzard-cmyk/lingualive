@@ -547,8 +547,27 @@ app.post("/api/ttskey", async (req, res) => {
       }
       saveEnvVar("ELEVENLABS_API_KEY", key);
     } else {
-      const r = await fetch("https://api.openai.com/v1/models", { headers: { Authorization: `Bearer ${key}` } });
-      if (!r.ok) return res.status(401).json({ error: "Clé OpenAI refusée (HTTP " + r.status + ")." });
+      // Même principe : on teste la permission qui compte (génération audio),
+      // ce qui détecte aussi l'absence de crédit
+      const r = await fetch("https://api.openai.com/v1/audio/speech", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "gpt-4o-mini-tts", voice: "coral", input: "Hi!", response_format: "mp3" }),
+      });
+      if (!r.ok) {
+        const detail = await r.text().catch(() => "");
+        console.error("Validation OpenAI:", r.status, detail.slice(0, 400));
+        let code = "", msg = "";
+        try { const j = JSON.parse(detail); code = j?.error?.code || ""; msg = j?.error?.message || ""; } catch {}
+        const REASONS = {
+          invalid_api_key: "La clé est invalide ou incomplète — copie-la juste après sa création.",
+          insufficient_quota: "Aucun crédit sur le compte OpenAI — ajoute du crédit dans platform.openai.com → Settings → Billing (5 $ minimum).",
+          model_not_found: "Cette clé n'a pas accès au modèle de voix — crée une clé sans restrictions (permissions par défaut).",
+        };
+        return res.status(401).json({
+          error: `Clé OpenAI refusée (HTTP ${r.status}${code ? " · " + code : ""}). ${REASONS[code] || msg || "Vérifie la clé."}`,
+        });
+      }
       saveEnvVar("OPENAI_API_KEY", key);
     }
     res.json({ ok: true, ttsProvider: ttsProvider() });
