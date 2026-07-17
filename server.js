@@ -511,7 +511,8 @@ app.post("/api/tts", async (req, res) => {
 // Enregistre une clé de voix premium (saisie par l'utilisateur dans les réglages)
 app.post("/api/ttskey", async (req, res) => {
   const provider = (req.body?.provider || "").trim();
-  const key = (req.body?.key || "").trim();
+  // Nettoie les guillemets/espaces qu'un copier-coller peut embarquer
+  const key = (req.body?.key || "").trim().replace(/^["']+|["']+$/g, "").replace(/\s+/g, "");
   if (!["elevenlabs", "openai"].includes(provider)) return res.status(400).json({ error: "Fournisseur inconnu." });
   if (!key) {
     // Champ vide = désactiver ce fournisseur
@@ -530,9 +531,18 @@ app.post("/api/ttskey", async (req, res) => {
       });
       if (!r.ok) {
         const detail = await r.text().catch(() => "");
-        console.error("Validation ElevenLabs:", r.status, detail.slice(0, 300));
+        console.error("Validation ElevenLabs:", r.status, detail.slice(0, 400));
+        // Traduit la raison exacte renvoyée par ElevenLabs
+        let status = "", msg = "";
+        try { const j = JSON.parse(detail); status = j?.detail?.status || ""; msg = j?.detail?.message || ""; } catch {}
+        const REASONS = {
+          invalid_api_key: "La clé est invalide ou incomplète — copie-la juste après sa création (elle n'est affichée qu'une fois, la version masquée de la liste ne marche pas).",
+          missing_permissions: "La clé n'a pas la permission « Text to Speech » — modifie-la ou crée une clé sans restrictions.",
+          detected_unusual_activity: "ElevenLabs bloque l'offre GRATUITE sur ce réseau (VPN/proxy détecté). Désactive tout VPN, ou passe au plan Starter (5 $/mois).",
+          quota_exceeded: "Crédits ElevenLabs épuisés pour ce mois.",
+        };
         return res.status(401).json({
-          error: `Clé ElevenLabs refusée (HTTP ${r.status}). Vérifie qu'elle est complète et que la permission « Text to Speech » est activée sur la clé (ou crée une clé sans restrictions).`,
+          error: `Clé ElevenLabs refusée (HTTP ${r.status}${status ? " · " + status : ""}). ${REASONS[status] || msg || "Vérifie la clé et ses permissions."}`,
         });
       }
       saveEnvVar("ELEVENLABS_API_KEY", key);

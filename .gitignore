@@ -3,3 +3,5 @@
 
 node_modules/
 tunnel.log
+server.log
+server-err.log
