@@ -1424,7 +1424,11 @@ function openSettings(errorMsg = "") {
       ? `✓ Clé API configurée · modèle : ${s.model}`
       : "Aucune clé API configurée — colle ta clé Anthropic ci-dessous.";
     const labels = { elevenlabs: "✓ ElevenLabs actif", openai: "✓ OpenAI actif", edge: "(actuellement : voix Edge gratuites)" };
-    document.getElementById("ttsProviderInfo").textContent = labels[s.ttsProvider] || "";
+    document.getElementById("ttsProviderInfo").textContent = s.premiumIssue === "quota"
+      ? "⚠️ Clé OK mais AUCUN CRÉDIT sur le compte — ajoute du crédit (Billing), les voix Edge sont utilisées en attendant"
+      : s.premiumIssue
+        ? "⚠️ Fournisseur premium en erreur — voix Edge utilisées en attendant"
+        : (labels[s.ttsProvider] || "");
   }).catch(() => {});
   loadVoices();
   document.getElementById("pauseSelect").value = String(state.pauseMs);

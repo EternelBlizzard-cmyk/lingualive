@@ -463,27 +463,38 @@ function ttsProvider() {
   return "edge";
 }
 
+// Quand le fournisseur premium échoue (crédit épuisé…), on l'écarte 5 minutes
+// pour ne pas payer sa latence à chaque phrase, et on l'affiche dans les réglages
+let premiumSkipUntil = 0;
+let premiumIssue = "";
+
 app.post("/api/tts", async (req, res) => {
   const { text = "", voice = "en-US-AriaNeural", level = "B2" } = req.body || {};
   if (!text.trim()) return res.status(400).json({ error: "Texte vide." });
   const cleanText = text.slice(0, 2000);
 
   // 1. Voix premium si une clé est configurée (échec → repli Edge, jamais de silence)
-  try {
-    if (process.env.ELEVENLABS_API_KEY && ELEVEN_VOICES[voice]) {
-      const buf = await elevenTts(ELEVEN_VOICES[voice], cleanText, level);
-      res.setHeader("Content-Type", "audio/mpeg");
-      res.setHeader("Cache-Control", "no-store");
-      return res.send(buf);
+  if (Date.now() > premiumSkipUntil) {
+    try {
+      if (process.env.ELEVENLABS_API_KEY && ELEVEN_VOICES[voice]) {
+        const buf = await elevenTts(ELEVEN_VOICES[voice], cleanText, level);
+        premiumIssue = "";
+        res.setHeader("Content-Type", "audio/mpeg");
+        res.setHeader("Cache-Control", "no-store");
+        return res.send(buf);
+      }
+      if (process.env.OPENAI_API_KEY) {
+        const buf = await openaiTts(voice, cleanText, level);
+        premiumIssue = "";
+        res.setHeader("Content-Type", "audio/mpeg");
+        res.setHeader("Cache-Control", "no-store");
+        return res.send(buf);
+      }
+    } catch (err) {
+      console.error("Voix premium indisponible, repli Edge :", err.message);
+      premiumSkipUntil = Date.now() + 5 * 60000;
+      premiumIssue = /429/.test(err.message) ? "quota" : "erreur";
     }
-    if (process.env.OPENAI_API_KEY) {
-      const buf = await openaiTts(voice, cleanText, level);
-      res.setHeader("Content-Type", "audio/mpeg");
-      res.setHeader("Cache-Control", "no-store");
-      return res.send(buf);
-    }
-  } catch (err) {
-    console.error("Voix premium indisponible, repli Edge :", err.message);
   }
 
   // 2. Voix neurales Edge (gratuites)
@@ -700,7 +711,19 @@ app.get("/api/status", (req, res) => {
     model: MODEL,
     keyConfigured: Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN),
     ttsProvider: ttsProvider(),
+    premiumIssue: Date.now() <= premiumSkipUntil ? premiumIssue : "",
   });
+});
+
+// Garde-fous : une connexion TTS du pool qui expire (ou toute erreur imprévue)
+// ne doit jamais tuer le serveur
+process.on("uncaughtException", (err) => {
+  console.error("Exception non rattrapée (serveur maintenu) :", err.message);
+  ttsPool.clear();
+});
+process.on("unhandledRejection", (err) => {
+  console.error("Promesse rejetée non gérée (serveur maintenu) :", err?.message || err);
+  ttsPool.clear();
 });
 
 app.listen(PORT, () => {

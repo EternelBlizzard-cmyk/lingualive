@@ -9,7 +9,8 @@ serverDir = "C:\Users\jeffr\OneDrive\Documents\Claude\Projects\Edutrust\linguali
 WScript.Sleep 45000
 
 shell.CurrentDirectory = serverDir
-shell.Run "cmd /c node """ & serverDir & "\server.js""", 0, False
+' Le superviseur relance le serveur automatiquement s'il s'arrete
+shell.Run "cmd /c """ & serverDir & "\server-loop.bat""", 0, False
 
 ' Tunnel mobile : l'URL du moment est visible dans l'appli (Réglages > Sur le téléphone)
 WScript.Sleep 5000
