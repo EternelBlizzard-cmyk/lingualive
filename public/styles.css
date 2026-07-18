@@ -334,6 +334,27 @@ body {
   padding: 3px 12px; font-size: 0.85rem; font-weight: 600;
 }
 
+/* ── Test de niveau & briefing d'entraînement ── */
+.placement-box {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: space-between;
+  background: var(--panel2); border: 1px solid var(--line); border-radius: 12px;
+  padding: 12px 16px; margin: 14px 0; font-size: 0.92rem; line-height: 1.5;
+}
+.placement-box b { color: var(--accent); }
+.plan-h3 { font-size: 0.95rem; margin: 16px 0 8px; color: var(--accent); }
+.plan-row { padding: 8px 10px; border-left: 3px solid var(--line); margin-bottom: 6px; font-size: 0.92rem; line-height: 1.45; }
+.plan-row b { color: var(--text); }
+.plan-why { color: var(--structure); font-size: 0.82rem; margin-top: 2px; }
+.drill-focus {
+  width: 100%; font-size: 0.82rem; color: var(--grammar); cursor: help;
+  background: rgba(255, 92, 108, .08); border: 1px dashed rgba(255, 92, 108, .45);
+  border-radius: 10px; padding: 5px 11px;
+}
+.term-placed {
+  align-self: center; font-size: 0.85rem; color: var(--ok); font-weight: 600;
+  background: rgba(47, 208, 127, .1); border-radius: 999px; padding: 4px 14px;
+}
+
 /* ── Termes à placer (session ciblée) ── */
 .term-chips { display: flex; gap: 6px; flex-wrap: wrap; width: 100%; }
 .term-chip {

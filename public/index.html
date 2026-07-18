@@ -83,6 +83,7 @@
         <span class="lvl-chip" id="chatLevel"></span>
       </div>
       <div class="mission-chip" id="missionChip" hidden></div>
+      <div class="drill-focus" id="drillFocus" hidden></div>
       <div class="term-chips" id="termChips" hidden></div>
       <button class="end-btn" id="backToCallBtn" style="margin-left:auto">📞 Mode appel</button>
       <button class="end-btn" id="endBtn" style="margin-left:0">Terminer · Débrief</button>
@@ -159,6 +160,15 @@
     <div class="call-actions">
       <button class="call-btn mic" id="callMicBtn" title="Parler">🎤</button>
       <button class="call-btn end" id="callEndBtn" title="Terminer et voir le débrief">📞</button>
+    </div>
+  </div>
+
+  <!-- ═══════════ MODALE : BRIEFING D'ENTRAÎNEMENT CIBLÉ ═══════════ -->
+  <div class="modal-backdrop" id="planModal" hidden>
+    <div class="modal">
+      <div id="planContent"></div>
+      <button class="cta" id="planStartBtn">🎤 C'est parti</button>
+      <button class="ghost-btn" id="planCancelBtn">Annuler</button>
     </div>
   </div>
 

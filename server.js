@@ -636,9 +636,22 @@ const DRILL_SCHEMA = {
         additionalProperties: false,
       },
     },
+    targetErrors: {
+      type: "array",
+      description: "2 à 4 erreurs récurrentes de l'apprenant que cette session cible en priorité, reprises de la liste fournie",
+      items: {
+        type: "object",
+        properties: {
+          pattern: { type: "string", description: "Le motif d'erreur ciblé, en français" },
+          tip: { type: "string", description: "Le réflexe à adopter pendant la conversation, en français, 1 phrase courte" },
+        },
+        required: ["pattern", "tip"],
+        additionalProperties: false,
+      },
+    },
     focusSummary: { type: "string", description: "Une phrase en français résumant ce que cette session fait travailler" },
   },
-  required: ["title", "scenarioId", "mission", "targetTerms", "focusSummary"],
+  required: ["title", "scenarioId", "mission", "targetTerms", "targetErrors", "focusSummary"],
   additionalProperties: false,
 };
 

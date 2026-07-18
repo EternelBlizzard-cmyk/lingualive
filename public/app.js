@@ -98,6 +98,46 @@ const SCENARIOS = [
   },
 ];
 
+// Scénario interne du test de niveau (absent de la grille de contextes)
+const PLACEMENT_SCENARIO = {
+  id: "placement", emoji: "📊", label: "Test de niveau",
+  role: "a friendly language placement assessor. Start with very simple everyday questions, then raise the difficulty every 2 exchanges (past/future tenses, hypotheticals, opinions to defend, abstract topics) to find the learner's ceiling in about 8-10 exchanges. Adapt instantly: if they struggle, ease off; if they cruise, push harder. Stay warm and encouraging, never say which level you think they are",
+  setting: "a relaxed oral placement assessment to evaluate the learner's real speaking level",
+  missions: [],
+};
+
+/* Échelle CEFR : conversion estimation ↔ position numérique (pour la jauge) */
+const CEFR_NAMES = ["A1", "A2", "B1", "B2", "C1", "C2"];
+
+function cefrToNum(s) {
+  const m = (s || "").trim().toUpperCase().match(/^([ABC][12])\s*([+-])?/);
+  if (!m || !CEFR_NAMES.includes(m[1])) return null;
+  let n = CEFR_NAMES.indexOf(m[1]);
+  if (m[2] === "+") n += 0.33;
+  if (m[2] === "-") n -= 0.33;
+  return n;
+}
+
+function numToCefr(n) {
+  const k = Math.max(0, Math.min(5, Math.round(n * 3) / 3));
+  const i = Math.floor(k + 0.001);
+  return CEFR_NAMES[Math.min(i, 5)] + (k - i > 0.2 && i < 5 ? "+" : "");
+}
+
+// Niveau réellement démontré : moyenne pondérée (récent d'abord) des estimations
+// CEFR des 5 dernières sessions débriefées
+function measuredLevelNum() {
+  const nums = store.get("sessions", [])
+    .map((s) => cefrToNum(s.cefr))
+    .filter((n) => n !== null)
+    .slice(0, 5);
+  if (!nums.length) return null;
+  const weights = [5, 4, 3, 2, 1];
+  let sum = 0, wsum = 0;
+  nums.forEach((n, i) => { sum += n * weights[i]; wsum += weights[i]; });
+  return sum / wsum;
+}
+
 // Interlocuteurs : chacun a un accent (voix TTS correspondante si disponible) et une origine
 const PERSONAS = {
   daily: [
@@ -124,6 +164,9 @@ const PERSONAS = {
     { name: "Michael", flag: "🇺🇸", origin: "Boston, USA", lang: "en-US", ttsVoice: "en-US-EricNeural" },
     { name: "Charlotte", flag: "🇬🇧", origin: "London, UK", lang: "en-GB", ttsVoice: "en-GB-SoniaNeural" },
     { name: "Raj", flag: "🇮🇳", origin: "Bangalore, India", lang: "en-IN", ttsVoice: "en-IN-PrabhatNeural" },
+  ],
+  placement: [
+    { name: "Sam", flag: "📊", origin: "international assessment center", lang: "en-US", ttsVoice: "en-US-AriaNeural" },
   ],
   exam: [
     { name: "Margaret", flag: "🇬🇧", origin: "London, UK", lang: "en-GB", ttsVoice: "en-GB-SoniaNeural" },
@@ -303,25 +346,69 @@ function checkTargetTerms(userText) {
   if (!state.targetTerms.length) return;
   const norm = (s) => s.toLowerCase().replace(/[^\p{L}\p{N}' ]/gu, " ").replace(/\s+/g, " ").trim();
   const said = " " + norm(userText) + " ";
-  let newlyUsed = false;
+  const placed = [];
   for (const t of state.targetTerms) {
     if (!t.used && said.includes(" " + norm(t.term) + " ")) {
       t.used = true;
-      newlyUsed = true;
+      placed.push(t);
     }
   }
-  if (newlyUsed) {
-    renderTermChips();
-    if (state.targetTerms.every((t) => t.used)) {
-      const scroll = document.getElementById("chatScroll");
-      const banner = document.createElement("div");
-      banner.className = "mission-banner";
-      banner.textContent = "🏆 Tous les termes placés !";
-      scroll.appendChild(banner);
-      scroll.scrollTop = scroll.scrollHeight;
-      if (callOpen()) document.getElementById("callStatus").textContent = "🏆 Tous les termes placés !";
+  if (!placed.length) return;
+  state.termHintCounter = 0; // il vient d'en placer : pas de relance
+  renderTermChips();
+  creditVocabReviews(placed);
+
+  const scroll = document.getElementById("chatScroll");
+  for (const t of placed) {
+    const ok = document.createElement("div");
+    ok.className = "term-placed";
+    ok.textContent = `✅ Terme placé : « ${t.term} »`;
+    scroll.appendChild(ok);
+    addCallToast((el) => { el.textContent = `✅ « ${t.term} » placé !`; }, "native");
+  }
+  scroll.scrollTop = scroll.scrollHeight;
+
+  if (state.targetTerms.every((t) => t.used)) {
+    const banner = document.createElement("div");
+    banner.className = "mission-banner";
+    banner.textContent = "🏆 Tous les termes placés !";
+    scroll.appendChild(banner);
+    scroll.scrollTop = scroll.scrollHeight;
+    if (callOpen()) document.getElementById("callStatus").textContent = "🏆 Tous les termes placés !";
+  }
+}
+
+// Employer un mot du SRS en vraie conversation vaut révision réussie
+function creditVocabReviews(placedTerms) {
+  const vocab = store.get("vocab", []);
+  let changed = false;
+  for (const t of placedTerms) {
+    const v = vocab.find((x) => (x.lang || "en") === state.lang && x.term.toLowerCase() === t.term.toLowerCase());
+    if (v && v.due <= Date.now()) {
+      v.box = Math.min((v.box || 0) + 1, SRS_INTERVALS.length - 1);
+      v.due = Date.now() + SRS_INTERVALS[v.box] * 86400000;
+      v.touched = Date.now();
+      changed = true;
     }
   }
+  if (changed) { store.set("vocab", vocab); updateBadges(); }
+}
+
+// Relance discrète si plusieurs tours passent sans placer les termes restants
+function maybeShowTermHint() {
+  const remaining = state.targetTerms.filter((t) => !t.used);
+  if (!remaining.length) return;
+  state.termHintCounter = (state.termHintCounter || 0) + 1;
+  if (state.termHintCounter < 2) return;
+  state.termHintCounter = 0;
+  const list = remaining.slice(0, 3).map((t) => `« ${t.term} »`).join(", ");
+  const scroll = document.getElementById("chatScroll");
+  const hint = document.createElement("div");
+  hint.className = "coach-note";
+  hint.textContent = `💡 Pense à placer : ${list}`;
+  scroll.appendChild(hint);
+  scroll.scrollTop = scroll.scrollHeight;
+  addCallToast((el) => { el.textContent = `💡 À placer : ${list}`; });
 }
 
 /* ═══════════════ Synthèse vocale (TTS) ═══════════════ */
@@ -791,9 +878,27 @@ async function startSession(opts = {}) {
   state.missionDone = false;
   state.inSession = true;
   state.drillMode = !!opts.drill;
+  state.placementMode = !!opts.placement;
   state.programStepIndex = opts.programStep ?? null;
-  state.targetTerms = (opts.targetTerms || []).map((t) => ({ ...t, used: false }));
+  state.termHintCounter = 0;
+  let terms = opts.targetTerms || [];
+  // Sessions normales : les mots du jour à réviser (SRS) deviennent des termes à
+  // placer — les employer en vraie conversation vaut révision réussie
+  if (!terms.length && !state.placementMode) {
+    terms = store.get("vocab", [])
+      .filter((v) => (v.lang || "en") === state.lang && v.due <= Date.now())
+      .slice(0, 3)
+      .map((v) => ({ term: v.term, translation: v.translation, why: "révision du jour — l'employer valide ta révision" }));
+  }
+  state.targetTerms = terms.map((t) => ({ ...t, used: false }));
+  state.targetErrors = opts.targetErrors || [];
   renderTermChips();
+  const focusLine = document.getElementById("drillFocus");
+  focusLine.hidden = !state.targetErrors.length;
+  if (state.targetErrors.length) {
+    focusLine.textContent = "🩹 " + state.targetErrors.map((e) => e.pattern).join(" · ");
+    focusLine.title = state.targetErrors.map((e) => `${e.pattern} → ${e.tip}`).join("\n");
+  }
   // La reconnaissance écoute dans la langue (et la variante régionale) de l'interlocuteur
   if (recognition) recognition.lang = state.persona?.lang || (state.lang === "en" ? "en-US" : state.lang);
 
@@ -941,6 +1046,7 @@ async function sendTurn(userText, opts = {}) {
     state.history.push(historyEntry);
     state.history.push({ role: "assistant", text: data.reply });
     addBubble("ai", data.reply, {});
+    if (!opts.hidden) maybeShowTermHint();
     speak(data.reply, () => {
       if (state.handsFree && state.inSession) startListening();
     });
@@ -1154,6 +1260,11 @@ function saveSession(debrief) {
     }
     errors.sort((a, b) => b.count - a.count);
     store.set("errors", errors.slice(0, 40));
+  }
+
+  // Test de niveau : mémorise le résultat pour pré-régler le parcours
+  if (state.placementMode && debrief?.cefrEstimate) {
+    store.set("placement", { level: debrief.cefrEstimate, date: new Date().toISOString(), lang: state.lang });
   }
 
   updateStreak();
@@ -1412,10 +1523,19 @@ function renderProgram() {
   const program = store.get("program", null);
 
   if (!program) {
+    const placement = store.get("placement", null);
+    const placedLevel = placement ? (placement.level.match(/^[ABC][12]/) || [])[0] : null;
     root.innerHTML = `
       <section class="panel">
         <h2>🎓 Mon parcours de progression</h2>
         <p class="muted">Un programme d'étapes sur mesure, du niveau où tu es vers le niveau que tu vises — contextes variés, missions concrètes, difficulté croissante. Chaque étape est une conversation de 10-15 minutes.</p>
+        <div class="placement-box">
+          ${placement
+            ? `<span>📊 Niveau évalué : <b>${placement.level}</b> <span class="muted">(test du ${new Date(placement.date).toLocaleDateString("fr-FR", { day: "numeric", month: "long" })})</span></span>
+               <button class="ghost-btn" id="placementBtn" style="width:auto;margin:0">Repasser le test</button>`
+            : `<span>Tu ne connais pas ton niveau réel ? Passe le <b>test de niveau</b> : ~10 échanges avec un évaluateur qui monte en difficulté, et ton niveau de départ se règle tout seul.</span>
+               <button class="cta small" id="placementBtn" style="margin:0">📊 Passer le test (~10 min)</button>`}
+        </div>
         <div class="program-form-row">
           <div>
             <label class="field-label">Je pars de</label>
@@ -1446,6 +1566,18 @@ function renderProgram() {
         <p class="error-text" id="progError"></p>
       </section>`;
     document.getElementById("progGenBtn").addEventListener("click", generateProgram);
+    document.getElementById("placementBtn").addEventListener("click", () => {
+      startSession({
+        placement: true,
+        scenario: PLACEMENT_SCENARIO,
+        mission: "",
+        level: placedLevel || "B2",
+      });
+    });
+    // Pré-règle le niveau de départ sur le niveau évalué
+    if (placedLevel && LEVELS.slice(0, 3).includes(placedLevel)) {
+      document.getElementById("progStart").value = placedLevel;
+    }
     return;
   }
 
@@ -1468,11 +1600,16 @@ function renderProgram() {
   const endStr = endDate.toLocaleDateString("fr-FR", { day: "numeric", month: "long" });
   const RHYTHM_LABELS = { 14: "2 étapes/jour", 7: "1 étape/jour", 5: "5 étapes/sem.", 3: "3 étapes/sem.", 2: "2 étapes/sem." };
 
-  // Jauge de niveau : position interpolée entre niveau de départ et niveau cible
+  // Jauge de niveau : position selon le niveau réellement DÉMONTRÉ (estimations
+  // CEFR des 5 dernières sessions, pondérées vers le récent) — pas selon le
+  // simple comptage de séances (qui reste sur la barre du dessous)
   const span = LEVELS.slice(LEVELS.indexOf(program.startLevel), LEVELS.indexOf(program.targetLevel) + 1);
-  const pos = frac * (span.length - 1);
-  const below = Math.min(Math.floor(pos), span.length - 2);
-  const currentLabel = pos >= span.length - 1 ? program.targetLevel : span[below] + (pos - below > 0.45 ? "+" : "");
+  const measured = measuredLevelNum();
+  const startN = cefrToNum(program.startLevel);
+  const targetN = cefrToNum(program.targetLevel);
+  const levelFrac = measured === null ? 0 : Math.max(0, Math.min(1, (measured - startN) / (targetN - startN)));
+  const currentLabel = measured === null ? program.startLevel : numToCefr(measured);
+  const nbMeasures = store.get("sessions", []).filter((s) => cefrToNum(s.cefr) !== null).slice(0, 5).length;
 
   root.innerHTML = `
     <div class="program-header">
@@ -1483,9 +1620,12 @@ function renderProgram() {
     <div class="gauge-card">
       <div class="gauge-labels">${span.map((l, i) => `<span style="left:${(i / (span.length - 1)) * 100}%">${l}</span>`).join("")}</div>
       <div class="level-gauge">
-        <div class="lg-fill" style="width:${frac * 100}%"></div>
-        <div class="lg-marker" style="left:${frac * 100}%"><span>≈ ${currentLabel}</span></div>
+        <div class="lg-fill" style="width:${levelFrac * 100}%"></div>
+        <div class="lg-marker" style="left:${levelFrac * 100}%"><span>≈ ${currentLabel}</span></div>
       </div>
+      <p class="muted" style="font-size:0.8rem;margin:-22px 0 12px">${measured === null
+        ? "La jauge avancera avec ton niveau réellement démontré en session (mesuré à chaque débrief)."
+        : `Niveau mesuré sur tes ${nbMeasures} dernières sessions — c'est ta production réelle qui fait avancer la jauge, pas le nombre de séances.`}</p>
       <div class="gauge-stats">
         <span>🏁 ${done} / ${total} étapes</span>
         <span>⏱ ${fmtH(remainingMin)} de conversation restantes (sur ${fmtH(totalMin)})</span>
@@ -1634,14 +1774,7 @@ document.getElementById("drillBtn").addEventListener("click", async () => {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Erreur serveur");
-    const plan = data.plan;
-    const scenario = SCENARIOS.find((s) => s.id === plan.scenarioId) || state.scenario;
-    startSession({
-      drill: true,
-      scenario,
-      mission: plan.mission,
-      targetTerms: plan.targetTerms,
-    });
+    showDrillBriefing(data.plan);
   } catch (e) {
     // Repli : session ciblée simple (erreurs seulement, sans termes imposés)
     alert("Plan indisponible (" + e.message + ") — session ciblée simple lancée.");
@@ -1650,6 +1783,59 @@ document.getElementById("drillBtn").addEventListener("click", async () => {
     btn.disabled = false;
     btn.textContent = "🎯 Session ciblée sur mes erreurs";
   }
+});
+
+/* ═══════════════ Briefing d'entraînement ciblé ═══════════════ */
+
+let pendingDrillPlan = null;
+
+function showDrillBriefing(plan) {
+  pendingDrillPlan = plan;
+  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text) n.textContent = text; return n; };
+  const root = document.getElementById("planContent");
+  root.innerHTML = "";
+  root.appendChild(el("h2", null, "🎯 " + plan.title));
+  root.appendChild(el("p", "muted", plan.focusSummary));
+
+  const scen = SCENARIOS.find((s) => s.id === plan.scenarioId);
+  root.appendChild(el("p", null, `${scen?.emoji || "💬"} ${scen?.label || ""} — 🎯 ${plan.mission}`));
+
+  if (plan.targetErrors?.length) {
+    root.appendChild(el("h3", "plan-h3", "🩹 Tes erreurs dans le viseur"));
+    for (const e of plan.targetErrors) {
+      const row = el("div", "plan-row");
+      row.appendChild(el("b", null, e.pattern));
+      row.appendChild(el("div", "muted", "→ " + e.tip));
+      root.appendChild(row);
+    }
+  }
+  root.appendChild(el("h3", "plan-h3", "💬 Les termes à placer (coche-les en les prononçant)"));
+  for (const t of plan.targetTerms || []) {
+    const row = el("div", "plan-row");
+    row.appendChild(el("b", null, t.term));
+    row.appendChild(el("span", "muted", " — " + t.translation));
+    row.appendChild(el("div", "plan-why", t.why));
+    root.appendChild(row);
+  }
+  document.getElementById("planModal").hidden = false;
+}
+
+document.getElementById("planStartBtn").addEventListener("click", () => {
+  document.getElementById("planModal").hidden = true;
+  if (!pendingDrillPlan) return;
+  const plan = pendingDrillPlan;
+  pendingDrillPlan = null;
+  startSession({
+    drill: true,
+    scenario: SCENARIOS.find((s) => s.id === plan.scenarioId) || state.scenario,
+    mission: plan.mission,
+    targetTerms: plan.targetTerms,
+    targetErrors: plan.targetErrors || [],
+  });
+});
+document.getElementById("planCancelBtn").addEventListener("click", () => {
+  document.getElementById("planModal").hidden = true;
+  pendingDrillPlan = null;
 });
 
 /* ═══════════════ Réglages / clé API ═══════════════ */
