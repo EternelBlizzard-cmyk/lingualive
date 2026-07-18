@@ -165,13 +165,81 @@ const SRS_INTERVALS = [0, 1, 3, 7, 14, 30]; // jours entre révisions selon le n
 
 /* ═══════════════ Stockage local ═══════════════ */
 
+const SYNC_KEYS = ["vocab", "sessions", "errors", "streak", "program", "lang", "pauseMs", "personaAccent", "voice"];
+
 const store = {
   get(key, fallback) {
     try { return JSON.parse(localStorage.getItem("lingualive_" + key)) ?? fallback; }
     catch { return fallback; }
   },
-  set(key, value) { localStorage.setItem("lingualive_" + key, JSON.stringify(value)); },
+  set(key, value) {
+    localStorage.setItem("lingualive_" + key, JSON.stringify(value));
+    // Toute modification d'une donnée synchronisée est horodatée puis poussée au serveur
+    if (SYNC_KEYS.includes(key)) {
+      try {
+        const meta = JSON.parse(localStorage.getItem("lingualive_meta") || "{}");
+        meta[key] = Date.now();
+        localStorage.setItem("lingualive_meta", JSON.stringify(meta));
+      } catch {}
+      scheduleSync();
+    }
+  },
 };
+
+/* ═══════════════ Synchronisation PC ↔ téléphone ═══════════════ */
+
+let syncTimer = null;
+
+function scheduleSync() {
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(syncNow, 2500);
+}
+
+async function syncNow() {
+  clearTimeout(syncTimer);
+  try {
+    const data = {};
+    for (const k of SYNC_KEYS) {
+      const v = store.get(k, null);
+      if (v !== null) data[k] = v;
+    }
+    const meta = JSON.parse(localStorage.getItem("lingualive_meta") || "{}");
+    const res = await api("/api/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ data, meta }),
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const merged = await res.json();
+    // Réécrit l'état fusionné sans repasser par store.set (pas de nouvelle synchro)
+    for (const k of SYNC_KEYS) {
+      if (merged.data && merged.data[k] !== undefined && merged.data[k] !== null) {
+        localStorage.setItem("lingualive_" + k, JSON.stringify(merged.data[k]));
+      }
+    }
+    localStorage.setItem("lingualive_meta", JSON.stringify(merged.meta || {}));
+    // Rafraîchit ce qui dépend des données fusionnées
+    if (!state.inSession) {
+      state.lang = store.get("lang", state.lang);
+      state.pauseMs = store.get("pauseMs", state.pauseMs);
+    }
+    renderStreak();
+    updateBadges();
+    setSyncChip(true);
+  } catch {
+    setSyncChip(false);
+  }
+}
+
+function setSyncChip(ok) {
+  const chip = document.getElementById("syncChip");
+  if (!chip) return;
+  chip.textContent = ok ? "☁️" : "☁️✕";
+  chip.style.opacity = ok ? "0.85" : "0.5";
+  chip.title = ok
+    ? "Synchronisé PC ↔ téléphone à " + new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })
+    : "Synchronisation impossible (hors ligne ?) — nouvel essai à la prochaine modification";
+}
 
 /* ═══════════════ Appels API (avec code d'accès mémorisé) ═══════════════ */
 
@@ -1071,7 +1139,7 @@ function saveSession(debrief) {
   const vocab = store.get("vocab", []);
   for (const v of state.vocabSeen) {
     if (!vocab.some((x) => x.term.toLowerCase() === v.term.toLowerCase())) {
-      vocab.push({ ...v, context: state.scenario.label, lang: state.lang, box: 0, due: Date.now(), added: Date.now() });
+      vocab.push({ ...v, context: state.scenario.label, lang: state.lang, box: 0, due: Date.now(), added: Date.now(), touched: Date.now() });
     }
   }
   store.set("vocab", vocab);
@@ -1215,6 +1283,7 @@ function gradeReview(item, knew, panel) {
   if (v) {
     v.box = knew ? Math.min(v.box + 1, SRS_INTERVALS.length - 1) : 0;
     v.due = Date.now() + SRS_INTERVALS[v.box] * 86400000 + (knew ? 0 : 10 * 60000);
+    v.touched = Date.now();
     store.set("vocab", vocab);
   }
   state.reviewQueue.shift();
@@ -1692,3 +1761,5 @@ loadVoices();
 renderStreak();
 updateBadges();
 show("setup");
+// Récupère l'état fusionné des autres appareils au démarrage, puis rafraîchit l'écran
+syncNow().then(() => { if (!state.inSession) renderSetup(); });

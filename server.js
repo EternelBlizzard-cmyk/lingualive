@@ -793,6 +793,75 @@ app.get("/api/tunnel", async (req, res) => {
   }
 });
 
+// --- Synchronisation des données entre appareils (PC ↔ téléphone) ---
+// Le serveur garde l'état fusionné dans data.json ; chaque appareil envoie son
+// état local et repart avec la fusion. Union pour vocab/sessions/erreurs,
+// « le plus récent gagne » pour les réglages et le parcours.
+
+const DATA_PATH = path.join(__dirname, "data.json");
+
+function readSyncData() {
+  try { return JSON.parse(fs.readFileSync(DATA_PATH, "utf-8")); } catch { return { data: {}, meta: {} }; }
+}
+
+function mergeSync(saved, incoming) {
+  const sData = saved.data || {}, iData = incoming.data || {};
+  const sMeta = saved.meta || {}, iMeta = incoming.meta || {};
+  const outData = {}, outMeta = {};
+
+  // Réglages, streak et parcours : la version modifiée le plus récemment gagne
+  for (const k of ["streak", "program", "lang", "pauseMs", "personaAccent", "voice"]) {
+    const useIncoming = (iMeta[k] || 0) >= (sMeta[k] || 0);
+    let val = useIncoming ? iData[k] : sData[k];
+    if (val === undefined || val === null) val = useIncoming ? sData[k] : iData[k];
+    if (val !== undefined && val !== null) outData[k] = val;
+    outMeta[k] = Math.max(iMeta[k] || 0, sMeta[k] || 0);
+  }
+
+  // Vocabulaire : union par (langue, terme) — l'entrée travaillée le plus récemment gagne
+  const vmap = new Map();
+  for (const v of [...(sData.vocab || []), ...(iData.vocab || [])]) {
+    if (!v || !v.term) continue;
+    const id = (v.lang || "en") + "|" + v.term.toLowerCase();
+    const prev = vmap.get(id);
+    if (!prev || (v.touched || v.added || 0) > (prev.touched || prev.added || 0)) vmap.set(id, v);
+  }
+  outData.vocab = [...vmap.values()];
+  outMeta.vocab = Math.max(iMeta.vocab || 0, sMeta.vocab || 0);
+
+  // Sessions : union par horodatage
+  const smap = new Map();
+  for (const s of [...(sData.sessions || []), ...(iData.sessions || [])]) {
+    if (s && s.date) smap.set(s.date, s);
+  }
+  outData.sessions = [...smap.values()].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 100);
+  outMeta.sessions = Math.max(iMeta.sessions || 0, sMeta.sessions || 0);
+
+  // Erreurs récurrentes : union par motif, le compteur le plus élevé gagne
+  const emap = new Map();
+  for (const e of [...(sData.errors || []), ...(iData.errors || [])]) {
+    if (!e || !e.pattern) continue;
+    const id = e.pattern.toLowerCase();
+    const prev = emap.get(id);
+    emap.set(id, !prev ? e : { ...e, count: Math.max(prev.count || 1, e.count || 1) });
+  }
+  outData.errors = [...emap.values()].sort((a, b) => (b.count || 0) - (a.count || 0)).slice(0, 40);
+  outMeta.errors = Math.max(iMeta.errors || 0, sMeta.errors || 0);
+
+  return { data: outData, meta: outMeta };
+}
+
+app.post("/api/sync", (req, res) => {
+  try {
+    const incoming = { data: req.body?.data || {}, meta: req.body?.meta || {} };
+    const merged = mergeSync(readSyncData(), incoming);
+    fs.writeFileSync(DATA_PATH, JSON.stringify(merged));
+    res.json(merged);
+  } catch (err) {
+    res.status(500).json({ error: "Synchronisation impossible : " + err.message });
+  }
+});
+
 app.get("/api/status", (req, res) => {
   res.json({
     model: MODEL,
