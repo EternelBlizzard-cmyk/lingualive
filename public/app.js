@@ -210,7 +210,51 @@ const state = {
   missionDone: false,
   reviewQueue: [],
   programStepIndex: null, // étape du parcours en cours, le cas échéant
+  targetTerms: [],        // session ciblée : [{term, translation, why, used}]
 };
+
+/* ═══════════════ Termes à placer (session ciblée) ═══════════════ */
+
+function renderTermChips() {
+  for (const id of ["termChips", "callTerms"]) {
+    const box = document.getElementById(id);
+    box.hidden = !state.targetTerms.length;
+    box.innerHTML = "";
+    for (const t of state.targetTerms) {
+      const chip = document.createElement("span");
+      chip.className = "term-chip" + (t.used ? " used" : "");
+      chip.textContent = t.term;
+      chip.title = `${t.translation} — ${t.why}`;
+      box.appendChild(chip);
+    }
+  }
+}
+
+// Vérifie quels termes cibles apparaissent dans la prise de parole
+function checkTargetTerms(userText) {
+  if (!state.targetTerms.length) return;
+  const norm = (s) => s.toLowerCase().replace(/[^\p{L}\p{N}' ]/gu, " ").replace(/\s+/g, " ").trim();
+  const said = " " + norm(userText) + " ";
+  let newlyUsed = false;
+  for (const t of state.targetTerms) {
+    if (!t.used && said.includes(" " + norm(t.term) + " ")) {
+      t.used = true;
+      newlyUsed = true;
+    }
+  }
+  if (newlyUsed) {
+    renderTermChips();
+    if (state.targetTerms.every((t) => t.used)) {
+      const scroll = document.getElementById("chatScroll");
+      const banner = document.createElement("div");
+      banner.className = "mission-banner";
+      banner.textContent = "🏆 Tous les termes placés !";
+      scroll.appendChild(banner);
+      scroll.scrollTop = scroll.scrollHeight;
+      if (callOpen()) document.getElementById("callStatus").textContent = "🏆 Tous les termes placés !";
+    }
+  }
+}
 
 /* ═══════════════ Synthèse vocale (TTS) ═══════════════ */
 
@@ -680,6 +724,8 @@ async function startSession(opts = {}) {
   state.inSession = true;
   state.drillMode = !!opts.drill;
   state.programStepIndex = opts.programStep ?? null;
+  state.targetTerms = (opts.targetTerms || []).map((t) => ({ ...t, used: false }));
+  renderTermChips();
   // La reconnaissance écoute dans la langue (et la variante régionale) de l'interlocuteur
   if (recognition) recognition.lang = state.persona?.lang || (state.lang === "en" ? "en-US" : state.lang);
 
@@ -805,6 +851,7 @@ async function sendTurn(userText, opts = {}) {
     userText,
     alternatives: opts.alternatives || [],
     knownErrors: state.drillMode ? knownErrorPatterns() : [],
+    targetTerms: state.targetTerms.filter((t) => !t.used).map((t) => t.term),
   });
   const post = (path) => api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: payload });
 
@@ -822,6 +869,7 @@ async function sendTurn(userText, opts = {}) {
       addBubble("ai", "⚠️ " + (data.error || "Erreur serveur"));
       return;
     }
+    if (!opts.hidden) checkTargetTerms(userText);
     state.history.push(historyEntry);
     state.history.push({ role: "assistant", text: data.reply });
     addBubble("ai", data.reply, {});
@@ -927,6 +975,9 @@ async function endSession() {
         mission: state.mission,
         history: state.history,
         corrections: state.corrections,
+        drillReport: state.targetTerms.length
+          ? { terms: state.targetTerms.map((t) => ({ term: t.term, used: t.used })) }
+          : null,
       }),
     });
     const data = await res.json();
@@ -1491,9 +1542,45 @@ function renderErrors() {
   }
 }
 
-document.getElementById("drillBtn").addEventListener("click", () => {
-  // La prochaine session ciblera les erreurs du journal
-  startSession({ drill: true, mission: "" });
+document.getElementById("drillBtn").addEventListener("click", async () => {
+  const btn = document.getElementById("drillBtn");
+  btn.disabled = true;
+  btn.textContent = "⏳ Préparation de ta session sur mesure…";
+  try {
+    // Vocabulaire fragile : mots retombés en boîte 0-1 lors des révisions
+    const weakVocab = store.get("vocab", [])
+      .filter((v) => (v.lang || "en") === state.lang && v.box <= 1)
+      .slice(0, 10)
+      .map((v) => ({ term: v.term, translation: v.translation }));
+    const res = await api("/api/drillplan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        errors: store.get("errors", []).slice(0, 10),
+        weakVocab,
+        language: LANGS[state.lang]?.name || "English",
+        languageFr: LANGS[state.lang]?.labelFr || "anglais",
+        level: state.level,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Erreur serveur");
+    const plan = data.plan;
+    const scenario = SCENARIOS.find((s) => s.id === plan.scenarioId) || state.scenario;
+    startSession({
+      drill: true,
+      scenario,
+      mission: plan.mission,
+      targetTerms: plan.targetTerms,
+    });
+  } catch (e) {
+    // Repli : session ciblée simple (erreurs seulement, sans termes imposés)
+    alert("Plan indisponible (" + e.message + ") — session ciblée simple lancée.");
+    startSession({ drill: true, mission: "" });
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "🎯 Session ciblée sur mes erreurs";
+  }
 });
 
 /* ═══════════════ Réglages / clé API ═══════════════ */

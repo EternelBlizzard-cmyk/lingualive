@@ -334,6 +334,20 @@ body {
   padding: 3px 12px; font-size: 0.85rem; font-weight: 600;
 }
 
+/* ── Termes à placer (session ciblée) ── */
+.term-chips { display: flex; gap: 6px; flex-wrap: wrap; width: 100%; }
+.term-chip {
+  font-size: 0.8rem; padding: 4px 11px; border-radius: 999px; cursor: help;
+  background: var(--bg2); border: 1px dashed var(--muted); color: var(--muted);
+  transition: all .25s;
+}
+.term-chip.used {
+  border: 1px solid var(--ok); color: var(--ok); background: rgba(47, 208, 127, .1);
+  text-decoration: none;
+}
+.term-chip.used::before { content: "✓ "; font-weight: 800; }
+.call-terms { justify-content: center; margin-top: 10px; }
+
 /* ── Parcours ── */
 .program-header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 6px; }
 .program-header h2 { flex: 1; font-size: 1.15rem; }

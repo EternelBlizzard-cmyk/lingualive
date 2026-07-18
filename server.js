@@ -220,7 +220,7 @@ const DEBRIEF_SCHEMA = {
 };
 
 app.post("/api/debrief", async (req, res) => {
-  const { scenario, level = "B2", mission = "", history = [], corrections = [], language = "English", languageFr = "anglais" } = req.body || {};
+  const { scenario, level = "B2", mission = "", history = [], corrections = [], language = "English", languageFr = "anglais", drillReport = null } = req.body || {};
   if (!history.length) return res.status(400).json({ error: "Aucune conversation à analyser." });
 
   const transcript = history
@@ -239,7 +239,11 @@ TRANSCRIPT
 ${transcript}
 
 CORRECTIONS RELEVÉES PENDANT LA SESSION
-${corrList || "(aucune)"}`;
+${corrList || "(aucune)"}${drillReport ? `
+
+SESSION D'ENTRAÎNEMENT CIBLÉ — termes à placer :
+${drillReport.terms.map((t) => `- "${t.term}" : ${t.used ? "PLACÉ ✓" : "NON PLACÉ ✗"}`).join("\n")}
+Commente dans le bilan la façon dont les termes ont été employés (ou pas) et si les erreurs ciblées ont été évitées.` : ""}`;
 
   try {
     const stream = client.messages.stream({
@@ -266,7 +270,14 @@ ${corrList || "(aucune)"}`;
 
 const FAST_MODEL = process.env.LINGUALIVE_FAST_MODEL || "claude-haiku-4-5-20251001";
 
-function replySystemPrompt({ scenario, level, mission, persona, language = "English" }) {
+function targetTermsBlock(targetTerms) {
+  if (!targetTerms || !targetTerms.length) return "";
+  return `
+TARGET EXPRESSIONS — the learner is training to use these: ${targetTerms.join(" · ")}.
+Steer the conversation so THEY get natural openings to use each one (ask questions or create situations that call for them). Do not use these expressions yourself before the learner does — leave them the opening.`;
+}
+
+function replySystemPrompt({ scenario, level, mission, persona, language = "English", targetTerms = [] }) {
   return `You are a ${language} conversation partner for a French-speaking learner. The conversation is entirely in ${language}. Role-play only — no coaching, no corrections, no meta-comments.
 
 You are: ${persona ? `${persona.name}, from ${persona.origin} — ` : ""}${scenario.role}
@@ -275,7 +286,7 @@ ${persona ? `Use turns of phrase typical of ${language} speakers from ${persona.
 ${mission ? `The learner is trying to accomplish: "${mission}". Give them realistic opportunities (including light obstacles).` : ""}
 
 CEFR ${level}: ${LEVEL_GUIDE[level] || LEVEL_GUIDE.B2}
-
+${targetTermsBlock(targetTerms)}
 Rules:
 - Stay in character, react to what they said, keep the conversation moving with a question or hook.
 - 1 to 3 short spoken sentences. Plain text only — it is read aloud by text-to-speech.
@@ -284,7 +295,7 @@ Rules:
 }
 
 app.post("/api/reply", async (req, res) => {
-  const { scenario, level = "B2", mission = "", history = [], userText = "", alternatives = [], persona = null, language = "English" } = req.body || {};
+  const { scenario, level = "B2", mission = "", history = [], userText = "", alternatives = [], persona = null, language = "English", targetTerms = [] } = req.body || {};
   if (!scenario || !scenario.role) return res.status(400).json({ error: "Scénario manquant." });
   if (!userText.trim()) return res.status(400).json({ error: "Message vide." });
 
@@ -301,7 +312,7 @@ app.post("/api/reply", async (req, res) => {
     const message = await client.messages.create({
       model: FAST_MODEL,
       max_tokens: 300,
-      system: replySystemPrompt({ scenario, level, mission, persona, language }),
+      system: replySystemPrompt({ scenario, level, mission, persona, language, targetTerms }),
       messages,
     });
     const textBlock = message.content.find((b) => b.type === "text");
@@ -593,6 +604,73 @@ app.post("/api/ttskey", async (req, res) => {
     res.json({ ok: true, ttsProvider: ttsProvider() });
   } catch (err) {
     res.status(500).json({ error: "Validation impossible : " + err.message });
+  }
+});
+
+// --- Plan d'entraînement ciblé : scénario construit sur les erreurs + termes à placer ---
+
+const DRILL_SCHEMA = {
+  type: "object",
+  properties: {
+    title: { type: "string", description: "Titre court et motivant de la session d'entraînement, en français" },
+    scenarioId: {
+      type: "string",
+      enum: ["daily", "business", "interview", "appointment", "presentation", "exam", "free"],
+      description: "Le contexte le plus propice pour faire travailler ces erreurs et ces termes",
+    },
+    mission: {
+      type: "string",
+      description: "Mission concrète en français, conçue pour forcer l'apprenant à affronter ses erreurs récurrentes",
+    },
+    targetTerms: {
+      type: "array",
+      description: "5 à 7 termes/expressions que l'apprenant devra placer pendant la conversation : mélange de son vocabulaire fragile fourni et d'expressions directement liées à ses erreurs récurrentes (ex: s'il confond for/since, inclure une expression avec chacun)",
+      items: {
+        type: "object",
+        properties: {
+          term: { type: "string", description: "L'expression dans la langue cible, courte (1-4 mots)" },
+          translation: { type: "string", description: "Traduction française" },
+          why: { type: "string", description: "En français, très court : le lien avec son erreur ou le scénario, ex: 'ton point faible for/since'" },
+        },
+        required: ["term", "translation", "why"],
+        additionalProperties: false,
+      },
+    },
+    focusSummary: { type: "string", description: "Une phrase en français résumant ce que cette session fait travailler" },
+  },
+  required: ["title", "scenarioId", "mission", "targetTerms", "focusSummary"],
+  additionalProperties: false,
+};
+
+app.post("/api/drillplan", async (req, res) => {
+  const { errors = [], weakVocab = [], language = "English", languageFr = "anglais", level = "B2" } = req.body || {};
+  if (!errors.length && !weakVocab.length) {
+    return res.status(400).json({ error: "Aucune erreur ni vocabulaire fragile à travailler pour l'instant." });
+  }
+
+  const prompt = `Conçois une session de conversation d'entraînement ciblé en ${languageFr} (${language}), niveau ${level}.
+
+ERREURS RÉCURRENTES de l'apprenant (par fréquence) :
+${errors.slice(0, 10).map((e) => `- [${e.type}] ${e.pattern} (×${e.count || 1}) — ${e.advice || ""}`).join("\n") || "(aucune)"}
+
+VOCABULAIRE FRAGILE (mal mémorisé en révision) :
+${weakVocab.slice(0, 10).map((v) => `- ${v.term} (${v.translation})`).join("\n") || "(aucun)"}
+
+La session doit piéger gentiment l'apprenant : le scénario et la mission le forcent à utiliser les structures où il se trompe, et les termes cibles doivent être naturels dans ce scénario.`;
+
+  try {
+    const message = await client.messages.create({
+      model: MODEL,
+      max_tokens: 2500,
+      system:
+        "Tu es un professeur de langue expert en remédiation : tu conçois des exercices de conversation qui ciblent précisément les faiblesses d'un apprenant. Sois concret et malin dans le choix du scénario.",
+      output_config: { format: { type: "json_schema", schema: DRILL_SCHEMA } },
+      messages: [{ role: "user", content: prompt }],
+    });
+    const textBlock = message.content.find((b) => b.type === "text");
+    res.json({ plan: JSON.parse(textBlock.text) });
+  } catch (err) {
+    handleApiError(err, res);
   }
 });
 
