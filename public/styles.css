@@ -334,6 +334,23 @@ body {
   padding: 3px 12px; font-size: 0.85rem; font-weight: 600;
 }
 
+/* ── Blocs structurés (pitchs) & récitation évaluée ── */
+.block-card {
+  background: var(--panel2); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 16px 18px; margin-bottom: 14px;
+}
+.bc-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.bc-head b { font-size: 1.02rem; }
+.bc-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
+.block-guide { margin: 10px 0; }
+.block-live {
+  min-height: 3em; background: var(--bg2); border: 1px dashed var(--line); border-radius: 10px;
+  padding: 10px 14px; margin: 12px 0; font-size: 0.92rem; line-height: 1.5; color: var(--text);
+}
+.plan-row.covered { border-left-color: var(--ok); }
+.plan-row.missed { border-left-color: var(--grammar); }
+.debrief-ul { padding-left: 20px; display: flex; flex-direction: column; gap: 5px; font-size: 0.92rem; }
+
 /* ── Répétition orale & bibliothèque de phrases ── */
 .repeat-row {
   display: flex; gap: 12px; align-items: flex-start; justify-content: space-between;

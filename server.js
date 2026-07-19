@@ -672,6 +672,141 @@ Couvre les situations incontournables du contexte, du basique au plus élaboré,
   }
 });
 
+// --- Blocs structurés : monologues guidés (pitchs) de 1 à 3 minutes + évaluation ---
+
+const BLOCKS_SCHEMA = {
+  type: "object",
+  properties: {
+    blocks: {
+      type: "array",
+      description: "2 à 3 blocs structurés incontournables pour ce contexte : des monologues guidés de 1 à 3 minutes (pitch, réponse structurée, récit...)",
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Titre du bloc en français, ex: 'Pitch de présentation personnelle'" },
+          targetDuration: { type: "string", description: "Durée cible, ex: '1 min 30 – 2 min'" },
+          goal: { type: "string", description: "En français, une phrase : ce que ce bloc permet d'accomplir" },
+          parts: {
+            type: "array",
+            description: "4 à 7 parties ORDONNÉES qui structurent le monologue, chacune avec son squelette de phrase(s)",
+            items: {
+              type: "object",
+              properties: {
+                label: { type: "string", description: "Nom de la partie en français, ex: 'Accroche', 'Mon rôle', 'Projets récents'" },
+                text: { type: "string", description: "Le squelette dans la langue cible avec [crochets] à personnaliser, 1-2 phrases" },
+                fr: { type: "string", description: "Traduction française" },
+              },
+              required: ["label", "text", "fr"],
+              additionalProperties: false,
+            },
+          },
+          tips: { type: "array", items: { type: "string" }, description: "1 à 3 conseils de livraison en français (rythme, transitions, pièges)" },
+        },
+        required: ["title", "targetDuration", "goal", "parts", "tips"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["blocks"],
+  additionalProperties: false,
+};
+
+app.post("/api/blocks", async (req, res) => {
+  const { scenario, language = "English", languageFr = "anglais", level = "B2" } = req.body || {};
+  if (!scenario || !scenario.label) return res.status(400).json({ error: "Contexte manquant." });
+
+  const prompt = `Conçois les blocs structurés de référence en ${languageFr} (${language}) pour le contexte « ${scenario.label} » (${scenario.setting}), niveau ${level}.
+
+Un bloc = un monologue guidé de 1 à 3 minutes que l'apprenant doit savoir dérouler avec assurance (ex: pitch de présentation personnelle, présentation d'un projet, réponse structurée type STAR, monologue d'examen, récit d'une anecdote). Chaque partie enchaîne logiquement sur la précédente avec des transitions naturelles à l'oral.
+Exemple du type attendu pour un pitch perso : Accroche → Mon rôle ("I'm [name], I work as [role] at [company]") → Travaux récents ("Lately I've been working on [project]") → En parallèle ("On the side, I [activity]") → Ouverture.`;
+
+  try {
+    const message = await client.messages.create({
+      model: MODEL,
+      max_tokens: 6000,
+      system:
+        "Tu es un coach de prise de parole en langue étrangère : tu construis des trames de monologues réutilisables, naturelles à l'oral, avec des transitions fluides entre les parties.",
+      output_config: { format: { type: "json_schema", schema: BLOCKS_SCHEMA } },
+      messages: [{ role: "user", content: prompt }],
+    });
+    const textBlock = message.content.find((b) => b.type === "text");
+    res.json({ blocks: JSON.parse(textBlock.text).blocks });
+  } catch (err) {
+    handleApiError(err, res);
+  }
+});
+
+// Évaluation d'une récitation de bloc
+const BLOCKEVAL_SCHEMA = {
+  type: "object",
+  properties: {
+    score: { type: "integer", description: "Note globale sur 100 : structure suivie, langue, fluidité apparente, complétude" },
+    verdict: { type: "string", description: "Bilan en français, 1-2 phrases, honnête et encourageant" },
+    coverage: {
+      type: "array",
+      description: "Pour CHAQUE partie du bloc, dans l'ordre : a-t-elle été couverte ?",
+      items: {
+        type: "object",
+        properties: {
+          label: { type: "string", description: "Le nom de la partie (repris du bloc)" },
+          covered: { type: "boolean" },
+          comment: { type: "string", description: "En français, très court : ce qui a été fait ou ce qui manque" },
+        },
+        required: ["label", "covered", "comment"],
+        additionalProperties: false,
+      },
+    },
+    strengths: { type: "array", items: { type: "string" }, description: "2-3 points forts, en français, concrets" },
+    improvements: { type: "array", items: { type: "string" }, description: "2-3 améliorations prioritaires, en français, concrètes" },
+    nativeUpgrades: {
+      type: "array",
+      description: "2-4 phrases dites par l'apprenant reformulées comme un natif (les plus utiles)",
+      items: {
+        type: "object",
+        properties: {
+          original: { type: "string" },
+          better: { type: "string" },
+        },
+        required: ["original", "better"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["score", "verdict", "coverage", "strengths", "improvements", "nativeUpgrades"],
+  additionalProperties: false,
+};
+
+app.post("/api/blockeval", async (req, res) => {
+  const { block, transcript = "", language = "English", languageFr = "anglais", level = "B2" } = req.body || {};
+  if (!block || !block.parts) return res.status(400).json({ error: "Bloc manquant." });
+  if (!transcript.trim()) return res.status(400).json({ error: "Aucune prise de parole à évaluer." });
+
+  const prompt = `L'apprenant (francophone, niveau ${level}) devait dérouler ce bloc structuré en ${languageFr} (${language}) :
+
+BLOC « ${block.title} » (durée cible ${block.targetDuration || "1-3 min"})
+${block.parts.map((p, i) => `${i + 1}. ${p.label} — modèle : ${p.text}`).join("\n")}
+
+SA PRODUCTION (transcription de reconnaissance vocale — ignore la ponctuation manquante et les homophones douteux) :
+${transcript.trim()}
+
+Évalue : chaque partie a-t-elle été couverte (même avec d'autres mots que le modèle — c'est le fond qui compte) ? Qualité de la langue et des transitions ? Note sur 100 exigeante mais juste.`;
+
+  try {
+    const message = await client.messages.create({
+      model: MODEL,
+      max_tokens: 3000,
+      system:
+        "Tu es un coach de prise de parole exigeant et bienveillant, spécialiste des apprenants francophones. Tu évalues la récitation d'un monologue structuré : couverture des parties, langue, naturel. Tu t'appuies uniquement sur la transcription fournie.",
+      output_config: { format: { type: "json_schema", schema: BLOCKEVAL_SCHEMA } },
+      messages: [{ role: "user", content: prompt }],
+    });
+    const textBlock = message.content.find((b) => b.type === "text");
+    res.json({ eval: JSON.parse(textBlock.text) });
+  } catch (err) {
+    handleApiError(err, res);
+  }
+});
+
 // --- Plan d'entraînement ciblé : scénario construit sur les erreurs + termes à placer ---
 
 const DRILL_SCHEMA = {
@@ -794,6 +929,7 @@ Contraintes pédagogiques :
 - Progression réaliste : on démarre confortablement à ${startLevel}, on termine sur des étapes exigeantes de niveau ${targetLevel}.
 - Varier les contextes (quotidien, business, entretien, rendez-vous/services, présentation client, conversation libre) avec une dominante professionnelle en seconde moitié.
 - Chaque étape a UNE mission concrète (accomplissable et vérifiable en conversation) et UN point de langue prioritaire (grammaire, lexique, registre ou stratégie de discours) — les points de langue doivent couvrir les difficultés classiques des francophones dans cette langue (temps verbaux, prépositions, faux amis, tournures idiomatiques, registre formel/informel...).
+- Inclure 2-3 étapes de type « monologue structuré » : la mission demande de dérouler un pitch ou une réponse structurée de 1-3 minutes face à l'interlocuteur, qui réagit ensuite.
 - Les 2-3 dernières étapes sont des synthèses de haut niveau (présentation à enjeu, entretien difficile, débat).${priorities ? `\n- Priorités exprimées par l'apprenant : ${priorities}` : ""}`;
 
   try {
@@ -926,15 +1062,18 @@ function mergeSync(saved, incoming) {
   outData.errors = [...emap.values()].sort((a, b) => (b.count || 0) - (a.count || 0)).slice(0, 40);
   outMeta.errors = Math.max(iMeta.errors || 0, sMeta.errors || 0);
 
-  // Bibliothèque de phrases : union par (langue|contexte), la génération la plus récente gagne
-  const pb = {};
-  for (const src of [sData.phrasebook || {}, iData.phrasebook || {}]) {
-    for (const [k, v] of Object.entries(src)) {
-      if (!pb[k] || (v.generatedAt || 0) > (pb[k].generatedAt || 0)) pb[k] = v;
+  // Bibliothèque de phrases et blocs structurés : union par (langue|contexte),
+  // la génération la plus récente gagne
+  for (const field of ["phrasebook", "blocks"]) {
+    const merged = {};
+    for (const src of [sData[field] || {}, iData[field] || {}]) {
+      for (const [k, v] of Object.entries(src)) {
+        if (!merged[k] || (v.generatedAt || 0) > (merged[k].generatedAt || 0)) merged[k] = v;
+      }
     }
+    outData[field] = merged;
+    outMeta[field] = Math.max(iMeta[field] || 0, sMeta[field] || 0);
   }
-  outData.phrasebook = pb;
-  outMeta.phrasebook = Math.max(iMeta.phrasebook || 0, sMeta.phrasebook || 0);
 
   return { data: outData, meta: outMeta };
 }

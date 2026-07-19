@@ -208,7 +208,7 @@ const SRS_INTERVALS = [0, 1, 3, 7, 14, 30]; // jours entre révisions selon le n
 
 /* ═══════════════ Stockage local ═══════════════ */
 
-const SYNC_KEYS = ["vocab", "sessions", "errors", "streak", "program", "lang", "pauseMs", "personaAccent", "voice", "phrasebook", "placement"];
+const SYNC_KEYS = ["vocab", "sessions", "errors", "streak", "program", "lang", "pauseMs", "personaAccent", "voice", "phrasebook", "blocks", "placement"];
 
 const store = {
   get(key, fallback) {
@@ -323,6 +323,7 @@ const state = {
   programStepIndex: null, // étape du parcours en cours, le cas échéant
   targetTerms: [],        // session ciblée : [{term, translation, why, used}]
   repeatTarget: null,     // répétition en cours : {text, statusEl}
+  blockCapture: null,     // récitation de bloc en cours : {transcript}
 };
 
 /* ═══════════════ Termes à placer (session ciblée) ═══════════════ */
@@ -662,6 +663,14 @@ function finishUtterance() {
   pendingAlts = [];
   if (!text) return;
   stopListening();
+  // Mode récitation de bloc : on accumule le monologue au lieu d'envoyer à l'IA
+  if (state.blockCapture) {
+    state.blockCapture.transcript = (state.blockCapture.transcript + " " + text).trim();
+    const live = document.getElementById("blockLive");
+    if (live) live.textContent = state.blockCapture.transcript;
+    startListening(); // on continue d'écouter jusqu'au bouton Terminer
+    return;
+  }
   // Mode répétition : on compare à la phrase modèle au lieu d'envoyer à l'IA
   if (state.repeatTarget) {
     const rt = state.repeatTarget;
@@ -1890,6 +1899,7 @@ function renderPhrasebook() {
     btn.textContent = `✨ Générer les phrases de base — ${SCENARIOS.find((s) => s.id === pbScenarioId)?.label} (${LANGS[state.lang].label})`;
     btn.onclick = () => generatePhrasebook(btn);
     root.appendChild(btn);
+    renderBlocks(root, key); // les blocs vivent leur vie, avec ou sans les phrases
     return;
   }
 
@@ -1908,6 +1918,121 @@ function renderPhrasebook() {
   refresh.textContent = "♻️ Régénérer cette bibliothèque";
   refresh.onclick = () => generatePhrasebook(refresh);
   root.appendChild(refresh);
+
+  renderBlocks(root, key);
+}
+
+// Blocs structurés : monologues guidés (pitchs) avec récitation évaluée
+function renderBlocks(root, key) {
+  const h = document.createElement("h3");
+  h.className = "plan-h3";
+  h.style.marginTop = "26px";
+  h.textContent = "🧱 Blocs structurés — dérouler une idée complète (1 à 3 min)";
+  root.appendChild(h);
+
+  const cache = store.get("blocks", {});
+  const entry = cache[key];
+  if (!entry) {
+    const btn = document.createElement("button");
+    btn.className = "cta small";
+    btn.textContent = "✨ Générer les blocs de ce contexte (pitchs, réponses structurées…)";
+    btn.onclick = () => generateBlocks(btn, key);
+    root.appendChild(btn);
+    return;
+  }
+
+  for (const block of entry.blocks) {
+    const card = document.createElement("div");
+    card.className = "block-card";
+    const head = document.createElement("div");
+    head.className = "bc-head";
+    head.innerHTML = `<b></b> <span class="lvl-chip"></span>`;
+    head.querySelector("b").textContent = "🧱 " + block.title;
+    head.querySelector(".lvl-chip").textContent = "⏱ " + block.targetDuration;
+    card.appendChild(head);
+    const goal = document.createElement("p");
+    goal.className = "muted";
+    goal.textContent = block.goal;
+    card.appendChild(goal);
+    for (const part of block.parts) {
+      const row = document.createElement("div");
+      row.className = "plan-row";
+      const lab = document.createElement("b");
+      lab.textContent = part.label + " : ";
+      const txt = document.createElement("span");
+      txt.textContent = part.text;
+      const fr = document.createElement("div");
+      fr.className = "muted";
+      fr.style.fontSize = "0.82rem";
+      fr.textContent = part.fr;
+      row.append(lab, txt, fr);
+      card.appendChild(row);
+    }
+    if (block.tips?.length) {
+      const tips = document.createElement("p");
+      tips.className = "rr-usage";
+      tips.textContent = "💡 " + block.tips.join(" · ");
+      card.appendChild(tips);
+    }
+    const actions = document.createElement("div");
+    actions.className = "bc-actions";
+    const listen = document.createElement("button");
+    listen.className = "rv-btn";
+    listen.textContent = "🔊 Écouter le modèle";
+    listen.onclick = () => speak(block.parts.map((p) => p.text).join(" "));
+    const recite = document.createElement("button");
+    recite.className = "cta small";
+    recite.style.margin = "0";
+    recite.textContent = "🎙️ Réciter et être évalué";
+    recite.onclick = () => openBlockRecital(block);
+    const converse = document.createElement("button");
+    converse.className = "rv-btn know";
+    converse.textContent = "💬 En conversation";
+    converse.title = "Dérouler ce bloc face à un interlocuteur qui réagit";
+    converse.onclick = () => {
+      const scen = SCENARIOS.find((s) => s.id === pbScenarioId) || state.scenario;
+      startSession({
+        scenario: scen,
+        mission: `Dérouler ton « ${block.title} » (${block.targetDuration}) face à ton interlocuteur, puis répondre à ses questions`,
+      });
+    };
+    actions.append(listen, recite, converse);
+    card.appendChild(actions);
+    root.appendChild(card);
+  }
+  const refresh = document.createElement("button");
+  refresh.className = "ghost-btn";
+  refresh.style.width = "auto";
+  refresh.textContent = "♻️ Régénérer les blocs";
+  refresh.onclick = () => generateBlocks(refresh, key);
+  root.appendChild(refresh);
+}
+
+async function generateBlocks(btn, key) {
+  const scen = SCENARIOS.find((s) => s.id === pbScenarioId);
+  btn.disabled = true;
+  btn.textContent = "⏳ Génération (~20 s)…";
+  try {
+    const res = await api("/api/blocks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        scenario: { label: scen.label, setting: scen.setting },
+        language: LANGS[state.lang]?.name || "English",
+        languageFr: LANGS[state.lang]?.labelFr || "anglais",
+        level: state.level,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Erreur serveur");
+    const cache = store.get("blocks", {});
+    cache[key] = { blocks: data.blocks, generatedAt: Date.now() };
+    store.set("blocks", cache);
+    renderPhrasebook();
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = "⚠️ " + e.message + " — réessayer";
+  }
 }
 
 document.getElementById("pbScenarios").addEventListener("click", (e) => {
@@ -1943,6 +2068,127 @@ async function generatePhrasebook(btn) {
     btn.textContent = "⚠️ " + e.message + " — réessayer";
   }
 }
+
+/* ═══════════════ Récitation évaluée d'un bloc ═══════════════ */
+
+function openBlockRecital(block) {
+  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text) n.textContent = text; return n; };
+  const root = document.getElementById("blockContent");
+  root.innerHTML = "";
+  root.appendChild(el("h2", null, "🎙️ " + block.title));
+  root.appendChild(el("p", "muted", `Déroule ton monologue (${block.targetDuration}) en suivant la trame ci-dessous, puis clique sur Terminer pour l'évaluation. Les [crochets] sont à remplacer par tes infos.`));
+
+  const guide = el("div", "block-guide");
+  for (const p of block.parts) {
+    const row = el("div", "plan-row");
+    row.appendChild(el("b", null, p.label));
+    row.appendChild(el("div", "muted", p.text));
+    guide.appendChild(row);
+  }
+  root.appendChild(guide);
+
+  const live = el("div", "block-live", "");
+  live.id = "blockLive";
+  root.appendChild(live);
+
+  const actions = el("div", "review-actions");
+  const startBtn = el("button", "cta small", "🎤 Commencer");
+  startBtn.style.margin = "0";
+  const doneBtn = el("button", "rv-btn know", "✅ Terminer → évaluation");
+  doneBtn.disabled = true;
+  actions.append(startBtn, doneBtn);
+  root.appendChild(actions);
+
+  startBtn.onclick = () => {
+    stopAudio();
+    if (recognition) {
+      recognition.lang = ({ en: "en-US", es: "es-ES", de: "de-DE", it: "it-IT" }[state.lang] || "en-US");
+    }
+    state.blockCapture = { transcript: "" };
+    live.textContent = "🎤 Je t'écoute — déroule ton monologue…";
+    startBtn.disabled = true;
+    doneBtn.disabled = false;
+    startListening();
+  };
+
+  doneBtn.onclick = async () => {
+    const transcript = (state.blockCapture?.transcript || "") + " " + finalBuffer;
+    state.blockCapture = null;
+    stopListening();
+    doneBtn.disabled = true;
+    if (!transcript.trim()) {
+      live.textContent = "⚠️ Rien capté — réessaie en parlant après avoir cliqué sur Commencer.";
+      startBtn.disabled = false;
+      return;
+    }
+    live.textContent = "⏳ Évaluation en cours…";
+    try {
+      const res = await api("/api/blockeval", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          block: { title: block.title, targetDuration: block.targetDuration, parts: block.parts },
+          transcript: transcript.trim(),
+          language: LANGS[state.lang]?.name || "English",
+          languageFr: LANGS[state.lang]?.labelFr || "anglais",
+          level: state.level,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Erreur serveur");
+      renderBlockEval(root, block, data.eval);
+    } catch (e) {
+      live.textContent = "⚠️ " + e.message;
+      startBtn.disabled = false;
+    }
+  };
+
+  document.getElementById("blockModal").hidden = false;
+}
+
+function renderBlockEval(root, block, ev) {
+  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text) n.textContent = text; return n; };
+  root.innerHTML = "";
+  root.appendChild(el("h2", null, "📋 " + block.title + " — évaluation"));
+  root.appendChild(el("div", "cefr-big", ev.score + " / 100"));
+  root.appendChild(el("p", null, ev.verdict));
+
+  root.appendChild(el("h3", "plan-h3", "🧱 Couverture de la trame"));
+  for (const c of ev.coverage || []) {
+    const row = el("div", "plan-row" + (c.covered ? " covered" : " missed"));
+    row.appendChild(el("b", null, (c.covered ? "✅ " : "❌ ") + c.label));
+    row.appendChild(el("div", "muted", c.comment));
+    root.appendChild(row);
+  }
+
+  const section = (title, items) => {
+    if (!items?.length) return;
+    root.appendChild(el("h3", "plan-h3", title));
+    const ul = el("ul", "debrief-ul");
+    for (const s of items) { const li = el("li", null, s); ul.appendChild(li); }
+    root.appendChild(ul);
+  };
+  section("💪 Points forts", ev.strengths);
+  section("🎯 À travailler", ev.improvements);
+
+  if (ev.nativeUpgrades?.length) {
+    root.appendChild(el("h3", "plan-h3", "🗣 Comme un natif — répète pour ancrer"));
+    for (const u of ev.nativeUpgrades) {
+      root.appendChild(buildRepeatRow(u.better, "au lieu de : " + u.original));
+    }
+  }
+  const retry = el("button", "cta small", "🔁 Refaire une tentative");
+  retry.style.marginTop = "14px";
+  retry.onclick = () => openBlockRecital(block);
+  root.appendChild(retry);
+}
+
+document.getElementById("blockCloseBtn").addEventListener("click", () => {
+  state.blockCapture = null;
+  stopListening();
+  stopAudio();
+  document.getElementById("blockModal").hidden = true;
+});
 
 /* ═══════════════ Briefing d'entraînement ciblé ═══════════════ */
 
