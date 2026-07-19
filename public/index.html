@@ -14,6 +14,7 @@
     <nav class="tabs" id="mainTabs">
       <button class="tab active" data-view="talk">💬 Parler</button>
       <button class="tab" data-view="program">🎓 Parcours</button>
+      <button class="tab" data-view="phrases">📖 Phrases</button>
       <button class="tab" data-view="vocab">📚 Vocabulaire <span class="badge" id="vocabDueBadge" hidden></span></button>
       <button class="tab" data-view="progress">📈 Progrès</button>
       <button class="tab" data-view="errors">🩹 Mes erreurs</button>
@@ -106,6 +107,16 @@
   <!-- ═══════════ VUE : PARCOURS ═══════════ -->
   <main id="view-program" class="view" hidden>
     <div id="programContent"></div>
+  </main>
+
+  <!-- ═══════════ VUE : BIBLIOTHÈQUE DE PHRASES ═══════════ -->
+  <main id="view-phrases" class="view" hidden>
+    <section class="panel">
+      <h2>📖 Ma bibliothèque de phrases</h2>
+      <p class="muted">Les structures de base sur lesquelles t'appuyer à l'oral, contexte par contexte : squelettes de phrases à personnaliser ([crochets]), avec écoute 🔊 et entraînement 🎤.</p>
+      <div class="pb-scenarios" id="pbScenarios"></div>
+      <div id="pbContent"></div>
+    </section>
   </main>
 
   <!-- ═══════════ VUE : VOCABULAIRE ═══════════ -->

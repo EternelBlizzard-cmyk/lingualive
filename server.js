@@ -607,6 +607,71 @@ app.post("/api/ttskey", async (req, res) => {
   }
 });
 
+// --- Bibliothèque de phrases : structures de base par contexte ---
+
+const PHRASEBOOK_SCHEMA = {
+  type: "object",
+  properties: {
+    sections: {
+      type: "array",
+      description: "4 à 6 situations clés de ce contexte (ex: se présenter, ouvrir la conversation, demander de répéter, conclure...)",
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Titre de la situation, en français" },
+          phrases: {
+            type: "array",
+            description: "3 à 5 phrases-structures réutilisables, du plus simple au plus élaboré",
+            items: {
+              type: "object",
+              properties: {
+                text: {
+                  type: "string",
+                  description: "La phrase dans la langue cible, avec des [crochets] pour les parties à personnaliser, ex: Hi, I'm [name]. I work as [role] at [company].",
+                },
+                fr: { type: "string", description: "Traduction française (avec les mêmes [crochets])" },
+                usage: { type: "string", description: "Note d'usage en français très courte : registre, quand l'employer. Chaîne vide si évident." },
+              },
+              required: ["text", "fr", "usage"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["title", "phrases"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["sections"],
+  additionalProperties: false,
+};
+
+app.post("/api/phrasebook", async (req, res) => {
+  const { scenario, language = "English", languageFr = "anglais", level = "B2" } = req.body || {};
+  if (!scenario || !scenario.label) return res.status(400).json({ error: "Contexte manquant." });
+
+  const prompt = `Construis la bibliothèque de phrases de référence en ${languageFr} (${language}) pour le contexte « ${scenario.label} » (${scenario.setting}).
+
+Objectif : donner à un apprenant francophone (niveau ${level}) des STRUCTURES réutilisables sur lesquelles s'appuyer à l'oral — des squelettes de phrases avec des [crochets] à personnaliser, pas des phrases figées.
+Exemple du type attendu pour se présenter : "Hi, I'm [name]. I work as [role] at [company]. Lately I've been working on [project], and on the side I [activity]."
+Couvre les situations incontournables du contexte, du basique au plus élaboré, avec les tournures que les natifs emploient vraiment à l'oral.`;
+
+  try {
+    const message = await client.messages.create({
+      model: MODEL,
+      max_tokens: 6000,
+      system:
+        "Tu es un professeur de langue orale pragmatique : tu fournis des structures de phrases directement réutilisables en conversation réelle, idiomatiques et naturelles, jamais scolaires.",
+      output_config: { format: { type: "json_schema", schema: PHRASEBOOK_SCHEMA } },
+      messages: [{ role: "user", content: prompt }],
+    });
+    const textBlock = message.content.find((b) => b.type === "text");
+    res.json({ phrasebook: JSON.parse(textBlock.text) });
+  } catch (err) {
+    handleApiError(err, res);
+  }
+});
+
 // --- Plan d'entraînement ciblé : scénario construit sur les erreurs + termes à placer ---
 
 const DRILL_SCHEMA = {
@@ -860,6 +925,16 @@ function mergeSync(saved, incoming) {
   }
   outData.errors = [...emap.values()].sort((a, b) => (b.count || 0) - (a.count || 0)).slice(0, 40);
   outMeta.errors = Math.max(iMeta.errors || 0, sMeta.errors || 0);
+
+  // Bibliothèque de phrases : union par (langue|contexte), la génération la plus récente gagne
+  const pb = {};
+  for (const src of [sData.phrasebook || {}, iData.phrasebook || {}]) {
+    for (const [k, v] of Object.entries(src)) {
+      if (!pb[k] || (v.generatedAt || 0) > (pb[k].generatedAt || 0)) pb[k] = v;
+    }
+  }
+  outData.phrasebook = pb;
+  outMeta.phrasebook = Math.max(iMeta.phrasebook || 0, sMeta.phrasebook || 0);
 
   return { data: outData, meta: outMeta };
 }

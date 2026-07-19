@@ -208,7 +208,7 @@ const SRS_INTERVALS = [0, 1, 3, 7, 14, 30]; // jours entre révisions selon le n
 
 /* ═══════════════ Stockage local ═══════════════ */
 
-const SYNC_KEYS = ["vocab", "sessions", "errors", "streak", "program", "lang", "pauseMs", "personaAccent", "voice"];
+const SYNC_KEYS = ["vocab", "sessions", "errors", "streak", "program", "lang", "pauseMs", "personaAccent", "voice", "phrasebook", "placement"];
 
 const store = {
   get(key, fallback) {
@@ -322,6 +322,7 @@ const state = {
   reviewQueue: [],
   programStepIndex: null, // étape du parcours en cours, le cas échéant
   targetTerms: [],        // session ciblée : [{term, translation, why, used}]
+  repeatTarget: null,     // répétition en cours : {text, statusEl}
 };
 
 /* ═══════════════ Termes à placer (session ciblée) ═══════════════ */
@@ -468,12 +469,15 @@ function stopAudio() {
 
 // Voix neurales Microsoft générées côté serveur : naturelles et fidèles à l'accent
 // de l'interlocuteur, sur tous les navigateurs. Repli : synthèse du navigateur.
+// Voix serveur par défaut hors session, selon la langue d'étude
+const DEFAULT_TTS = { en: "en-US-AriaNeural", es: "es-ES-ElviraNeural", de: "de-DE-KatjaNeural", it: "it-IT-ElsaNeural" };
+
 async function speak(text, onend) {
   stopAudio();
   try {
     const voice = (state.inSession && state.persona && store.get("personaAccent", true) && state.persona.ttsVoice)
       ? state.persona.ttsVoice
-      : "en-US-AriaNeural";
+      : (DEFAULT_TTS[state.lang] || "en-US-AriaNeural");
     const res = await api("/api/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -658,7 +662,77 @@ function finishUtterance() {
   pendingAlts = [];
   if (!text) return;
   stopListening();
+  // Mode répétition : on compare à la phrase modèle au lieu d'envoyer à l'IA
+  if (state.repeatTarget) {
+    const rt = state.repeatTarget;
+    state.repeatTarget = null;
+    const pct = Math.round(repeatScore(rt.text, text) * 100);
+    if (rt.statusEl?.isConnected) {
+      rt.statusEl.textContent = pct >= 75 ? `✅ ${pct} %` : `🔁 ${pct} % — réessaie`;
+      rt.statusEl.classList.toggle("ok", pct >= 75);
+    }
+    // Reprend le fil de la conversation si on était en session mains libres
+    if (state.inSession && state.handsFree && !state.busy) startListening();
+    return;
+  }
   sendTurn(text, { alternatives: alts });
+}
+
+/* ═══════════════ Répétition orale (phrase modèle → micro → score) ═══════════════ */
+
+function repeatScore(target, said) {
+  const norm = (s) => s.toLowerCase().replace(/\[[^\]]*\]/g, " ").replace(/[^\p{L}\p{N}' ]/gu, " ").replace(/\s+/g, " ").trim();
+  const targetWords = norm(target).split(" ").filter(Boolean);
+  const saidWords = new Set(norm(said).split(" "));
+  if (!targetWords.length) return 0;
+  return targetWords.filter((w) => saidWords.has(w)).length / targetWords.length;
+}
+
+function repeatDrill(text, statusEl) {
+  if (state.repeatTarget) return; // une répétition à la fois
+  stopAudio();
+  stopListening();
+  if (recognition) {
+    recognition.lang = (state.inSession && state.persona?.lang)
+      || ({ en: "en-US", es: "es-ES", de: "de-DE", it: "it-IT" }[state.lang] || "en-US");
+  }
+  if (statusEl) { statusEl.textContent = "🔊 écoute…"; statusEl.classList.remove("ok"); }
+  state.repeatTarget = { text, statusEl };
+  speak(text, () => {
+    if (statusEl?.isConnected) statusEl.textContent = "🎤 à toi — répète la phrase";
+    startListening();
+  });
+}
+
+// Ligne réutilisable : phrase + traduction + écouter + répéter + score
+function buildRepeatRow(text, subtitle, usage) {
+  const row = document.createElement("div");
+  row.className = "repeat-row";
+  const body = document.createElement("div");
+  body.className = "rr-body";
+  const main = document.createElement("div");
+  main.className = "rr-text";
+  main.textContent = text;
+  body.appendChild(main);
+  if (subtitle) { const s = document.createElement("div"); s.className = "rr-sub"; s.textContent = subtitle; body.appendChild(s); }
+  if (usage) { const u = document.createElement("div"); u.className = "rr-usage"; u.textContent = usage; body.appendChild(u); }
+  const actions = document.createElement("div");
+  actions.className = "rr-actions";
+  const status = document.createElement("span");
+  status.className = "rr-status";
+  const listen = document.createElement("button");
+  listen.className = "rv-btn";
+  listen.textContent = "🔊";
+  listen.title = "Écouter";
+  listen.onclick = () => { state.repeatTarget = null; speak(text); };
+  const rep = document.createElement("button");
+  rep.className = "rv-btn know";
+  rep.textContent = "🎤";
+  rep.title = "Écouter puis répéter au micro";
+  rep.onclick = () => repeatDrill(text, status);
+  actions.append(status, listen, rep);
+  row.append(body, actions);
+  return row;
 }
 
 function startListening() {
@@ -767,7 +841,7 @@ document.getElementById("callAvatar").addEventListener("click", () => {
 
 /* ═══════════════ Navigation ═══════════════ */
 
-const views = ["setup", "chat", "program", "vocab", "progress", "errors"];
+const views = ["setup", "chat", "program", "phrases", "vocab", "progress", "errors"];
 
 function show(view) {
   views.forEach((v) => (document.getElementById("view-" + v).hidden = v !== view));
@@ -776,6 +850,7 @@ function show(view) {
     t.classList.toggle("active", target === view);
   });
   if (view === "program") renderProgram();
+  if (view === "phrases") renderPhrasebook();
   if (view === "vocab") renderVocab();
   if (view === "progress") renderProgress();
   if (view === "errors") renderErrors();
@@ -966,7 +1041,16 @@ function addBubble(role, text, extras = {}) {
   if (extras.nativeVersion) {
     const nv = document.createElement("div");
     nv.className = "native-version";
-    nv.textContent = "🗣 Un natif dirait : « " + extras.nativeVersion + " »";
+    nv.textContent = "🗣 Un natif dirait : « " + extras.nativeVersion + " » ";
+    // Répéter la tournure native quand TU le décides — sans que la conversation s'arrête
+    const rep = document.createElement("button");
+    rep.className = "replay";
+    rep.textContent = "🔁 répéter";
+    rep.title = "Écouter la phrase puis la répéter au micro";
+    const status = document.createElement("span");
+    status.className = "rr-status";
+    rep.onclick = (e) => { e.stopPropagation(); repeatDrill(extras.nativeVersion, status); };
+    nv.append(rep, status);
     msg.appendChild(nv);
   }
   if (extras.coachNote) {
@@ -1184,12 +1268,10 @@ function renderDebrief(d) {
   section("🎯 À travailler", d.improvements, (s) => el("li", null, s));
 
   if (d.nativeUpgrades?.length) {
-    root.appendChild(el("h3", null, "🗣 Comme un natif"));
+    root.appendChild(el("h3", null, "🗣 Comme un natif — atelier de répétition"));
+    root.appendChild(el("p", "muted", "Le moment idéal pour ancrer les tournures : écoute chaque phrase (🔊) puis répète-la au micro (🎤) — l'appli vérifie."));
     for (const u of d.nativeUpgrades) {
-      const div = el("div", "upgrade");
-      div.appendChild(el("span", "u-orig", u.original));
-      div.appendChild(el("span", "u-better", u.better));
-      root.appendChild(div);
+      root.appendChild(buildRepeatRow(u.better, "au lieu de : " + u.original));
     }
   }
   if (d.recurringErrors?.length) {
@@ -1784,6 +1866,83 @@ document.getElementById("drillBtn").addEventListener("click", async () => {
     btn.textContent = "🎯 Session ciblée sur mes erreurs";
   }
 });
+
+/* ═══════════════ Bibliothèque de phrases ═══════════════ */
+
+let pbScenarioId = null;
+
+function renderPhrasebook() {
+  if (!pbScenarioId) pbScenarioId = state.scenario.id;
+  const chips = document.getElementById("pbScenarios");
+  chips.innerHTML = SCENARIOS.map((s) => `
+    <button class="pb-chip ${s.id === pbScenarioId ? "active" : ""}" data-id="${s.id}">${s.emoji} ${s.label}</button>`).join("");
+
+  const root = document.getElementById("pbContent");
+  root.innerHTML = "";
+  const key = state.lang + "|" + pbScenarioId;
+  const cache = store.get("phrasebook", {});
+  const book = cache[key];
+
+  if (!book) {
+    const btn = document.createElement("button");
+    btn.className = "cta";
+    btn.style.marginTop = "14px";
+    btn.textContent = `✨ Générer les phrases de base — ${SCENARIOS.find((s) => s.id === pbScenarioId)?.label} (${LANGS[state.lang].label})`;
+    btn.onclick = () => generatePhrasebook(btn);
+    root.appendChild(btn);
+    return;
+  }
+
+  for (const section of book.sections) {
+    const h = document.createElement("h3");
+    h.className = "plan-h3";
+    h.textContent = section.title;
+    root.appendChild(h);
+    for (const p of section.phrases) {
+      root.appendChild(buildRepeatRow(p.text, p.fr, p.usage));
+    }
+  }
+  const refresh = document.createElement("button");
+  refresh.className = "ghost-btn";
+  refresh.style.width = "auto";
+  refresh.textContent = "♻️ Régénérer cette bibliothèque";
+  refresh.onclick = () => generatePhrasebook(refresh);
+  root.appendChild(refresh);
+}
+
+document.getElementById("pbScenarios").addEventListener("click", (e) => {
+  const chip = e.target.closest(".pb-chip");
+  if (!chip) return;
+  pbScenarioId = chip.dataset.id;
+  renderPhrasebook();
+});
+
+async function generatePhrasebook(btn) {
+  const scen = SCENARIOS.find((s) => s.id === pbScenarioId);
+  btn.disabled = true;
+  btn.textContent = "⏳ Génération (~20 s)…";
+  try {
+    const res = await api("/api/phrasebook", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        scenario: { label: scen.label, setting: scen.setting },
+        language: LANGS[state.lang]?.name || "English",
+        languageFr: LANGS[state.lang]?.labelFr || "anglais",
+        level: state.level,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Erreur serveur");
+    const cache = store.get("phrasebook", {});
+    cache[state.lang + "|" + pbScenarioId] = { ...data.phrasebook, generatedAt: Date.now() };
+    store.set("phrasebook", cache);
+    renderPhrasebook();
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = "⚠️ " + e.message + " — réessayer";
+  }
+}
 
 /* ═══════════════ Briefing d'entraînement ciblé ═══════════════ */
 
