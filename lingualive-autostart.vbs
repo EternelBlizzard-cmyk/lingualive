@@ -12,6 +12,6 @@ shell.CurrentDirectory = serverDir
 ' Le superviseur relance le serveur automatiquement s'il s'arrete
 shell.Run "cmd /c """ & serverDir & "\server-loop.bat""", 0, False
 
-' Tunnel mobile : l'URL du moment est visible dans l'appli (Réglages > Sur le téléphone)
+' Tunnel mobile supervisé : l'URL du moment est visible dans l'appli (Réglages > Sur le téléphone)
 WScript.Sleep 5000
-shell.Run "cmd /c ""C:\Program Files (x86)\cloudflared\cloudflared.exe"" tunnel --url http://localhost:3100 --logfile """ & serverDir & "\tunnel.log""", 0, False
+shell.Run "cmd /c """ & serverDir & "\tunnel-loop.bat""", 0, False

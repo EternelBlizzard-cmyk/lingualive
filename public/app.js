@@ -288,19 +288,31 @@ function setSyncChip(ok) {
 
 async function api(path, opts = {}) {
   opts.headers = Object.assign({}, opts.headers, { "X-Access-Code": store.get("accessCode", "") });
-  let res = await fetch(path, opts);
-  if (res.status === 401) {
-    const data = await res.clone().json().catch(() => ({}));
-    if (data.codeRequired) {
-      const code = prompt("🔒 Code d'accès LinguaLive :");
-      if (code && code.trim()) {
-        store.set("accessCode", code.trim());
-        opts.headers["X-Access-Code"] = code.trim();
-        res = await fetch(path, opts);
+  // Délai maximal : une requête qui n'aboutit pas (tunnel mort, réseau mobile...)
+  // doit échouer franchement plutôt que laisser l'appli « réfléchir » à l'infini
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs || 75000);
+  opts.signal = ctrl.signal;
+  try {
+    let res = await fetch(path, opts);
+    if (res.status === 401) {
+      const data = await res.clone().json().catch(() => ({}));
+      if (data.codeRequired) {
+        const code = prompt("🔒 Code d'accès LinguaLive :");
+        if (code && code.trim()) {
+          store.set("accessCode", code.trim());
+          opts.headers["X-Access-Code"] = code.trim();
+          res = await fetch(path, opts);
+        }
       }
     }
+    return res;
+  } catch (e) {
+    if (e.name === "AbortError") throw new Error("le serveur ne répond pas (tunnel coupé ou réseau instable)");
+    throw e;
+  } finally {
+    clearTimeout(timer);
   }
-  return res;
 }
 
 /* ═══════════════ État de session ═══════════════ */
@@ -1133,6 +1145,7 @@ async function sendTurn(userText, opts = {}) {
     if (!res.ok) {
       if (res.status === 401) openSettings(data.error);
       addBubble("ai", "⚠️ " + (data.error || "Erreur serveur"));
+      setCallState("", "⚠️ " + (data.error || "Erreur serveur") + " — touche l'avatar pour réessayer");
       return;
     }
     if (!opts.hidden) checkTargetTerms(userText);
@@ -1146,6 +1159,7 @@ async function sendTurn(userText, opts = {}) {
   } catch (err) {
     typing.remove();
     addBubble("ai", "⚠️ Connexion impossible : " + err.message);
+    setCallState("", "⚠️ Connexion impossible : " + err.message + " — vérifie que le PC est allumé, puis touche l'avatar");
   } finally {
     state.busy = false;
   }
