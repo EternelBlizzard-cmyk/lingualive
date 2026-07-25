@@ -203,6 +203,16 @@
   <div class="modal-backdrop" id="settingsModal" hidden>
     <div class="modal">
       <h2>⚙️ Réglages</h2>
+      <div id="mobileAccess" hidden>
+        <label class="field-label">📱 Sur le téléphone</label>
+        <div class="mobile-access-row">
+          <img id="tunnelQr" alt="QR code d'accès mobile" width="130" height="130">
+          <div>
+            <a id="tunnelUrl" target="_blank" rel="noopener"></a>
+            <p class="muted" id="tunnelHint">Scanne le QR code avec l'appareil photo du téléphone, puis « Ajouter à l'écran d'accueil ». L'URL change à chaque redémarrage du tunnel — reviens ici pour la retrouver.</p>
+          </div>
+        </div>
+      </div>
       <p id="keyStatus" class="muted"></p>
       <label class="field-label">Clé API Anthropic</label>
       <div class="key-row">
@@ -241,16 +251,6 @@
         <option value="2500">2,5 s — je réfléchis en parlant</option>
         <option value="3500">3,5 s — je prends mon temps</option>
       </select>
-      <div id="mobileAccess" hidden>
-        <label class="field-label">📱 Sur le téléphone</label>
-        <div class="mobile-access-row">
-          <img id="tunnelQr" alt="QR code d'accès mobile" width="130" height="130">
-          <div>
-            <a id="tunnelUrl" target="_blank" rel="noopener"></a>
-            <p class="muted" id="tunnelHint">Scanne le QR code avec l'appareil photo du téléphone, puis « Ajouter à l'écran d'accueil ». L'URL change à chaque redémarrage du tunnel — reviens ici pour la retrouver.</p>
-          </div>
-        </div>
-      </div>
       <button class="ghost-btn" id="settingsCloseBtn">Fermer</button>
     </div>
   </div>
