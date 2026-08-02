@@ -686,6 +686,7 @@ function finishUtterance() {
   // Mode répétition : on compare à la phrase modèle au lieu d'envoyer à l'IA
   if (state.repeatTarget) {
     const rt = state.repeatTarget;
+    clearTimeout(repeatTimeout);
     state.repeatTarget = null;
     const pct = Math.round(repeatScore(rt.text, text) * 100);
     if (rt.statusEl?.isConnected) {
@@ -709,8 +710,16 @@ function repeatScore(target, said) {
   return targetWords.filter((w) => saidWords.has(w)).length / targetWords.length;
 }
 
+function cancelRepeat() {
+  clearTimeout(repeatTimeout);
+  if (state.repeatTarget?.statusEl?.isConnected) state.repeatTarget.statusEl.textContent = "";
+  state.repeatTarget = null;
+}
+
+let repeatTimeout = null;
+
 function repeatDrill(text, statusEl) {
-  if (state.repeatTarget) return; // une répétition à la fois
+  if (state.repeatTarget) cancelRepeat(); // une répétition à la fois
   stopAudio();
   stopListening();
   if (recognition) {
@@ -722,6 +731,14 @@ function repeatDrill(text, statusEl) {
   speak(text, () => {
     if (statusEl?.isConnected) statusEl.textContent = "🎤 à toi — répète la phrase";
     startListening();
+    // Filet de sécurité : sans répétition dans les 20 s, on rend la parole à la
+    // conversation (sinon la phrase suivante serait avalée par le mode répétition)
+    clearTimeout(repeatTimeout);
+    repeatTimeout = setTimeout(() => {
+      if (!state.repeatTarget) return;
+      cancelRepeat();
+      if (state.inSession && state.handsFree && !state.busy) startListening();
+    }, 20000);
   });
 }
 
@@ -758,7 +775,14 @@ function buildRepeatRow(text, subtitle, usage) {
 
 function startListening() {
   if (!recognition || state.busy) return;
-  if (document.hidden) { micPausedByHide = true; return; } // repris au retour sur l'onglet
+  if (document.hidden) {
+    // Chrome n'accorde le micro qu'à l'onglet visible : on reprendra au retour
+    micPausedByHide = true;
+    const msg = "⏸️ Micro en pause — reviens sur cet onglet pour reprendre la parole.";
+    document.getElementById("interimText").textContent = msg;
+    if (callOpen()) document.getElementById("callStatus").textContent = msg;
+    return;
+  }
   stopAudio();
   wantListening = true;
   finalBuffer = "";
@@ -857,6 +881,7 @@ document.getElementById("callMicBtn").addEventListener("click", () => {
 // Toucher l'avatar pendant qu'il parle = l'interrompre et prendre la parole (comme au téléphone)
 document.getElementById("callAvatar").addEventListener("click", () => {
   stopAudio();
+  cancelRepeat();
   startListening();
 });
 
@@ -1211,7 +1236,12 @@ function addUserAnnotations(userBubble, turn) {
 }
 
 /* Micro & clavier */
-document.getElementById("micBtn").addEventListener("click", () => (listening ? stopListening() : startListening()));
+document.getElementById("micBtn").addEventListener("click", () => {
+  // Le bouton micro reprend toujours la main, même si une répétition traînait
+  cancelRepeat();
+  if (listening) stopListening();
+  else startListening();
+});
 document.getElementById("sendBtn").addEventListener("click", submitText);
 document.getElementById("textInput").addEventListener("keydown", (e) => { if (e.key === "Enter") submitText(); });
 
