@@ -160,6 +160,8 @@ app.post("/api/turn", async (req, res) => {
     const message = await client.messages.create({
       model: MODEL,
       max_tokens: 2000,
+      // appel conversationnel court et fréquent : raisonnement coupé (latence)
+      thinking: { type: "disabled" },
       system: turnSystemPrompt({ scenario, level, mission, knownErrors, persona, language }),
       output_config: { format: { type: "json_schema", schema: TURN_SCHEMA } },
       messages,
@@ -312,6 +314,9 @@ app.post("/api/reply", async (req, res) => {
     const message = await client.messages.create({
       model: FAST_MODEL,
       max_tokens: 300,
+      // Haiku 4.5 : sans paramètre thinking, pas de raisonnement — c'est déjà le
+      // réglage voulu pour cet appel ultra-fréquent (ne pas ajouter "disabled",
+      // seul le format {type:"enabled", budget_tokens} existe sur ce modèle)
       system: replySystemPrompt({ scenario, level, mission, persona, language, targetTerms }),
       messages,
     });
@@ -365,6 +370,8 @@ ${knownErrors && knownErrors.length ? `- Recurring weaknesses to watch: ${knownE
     const message = await client.messages.create({
       model: MODEL,
       max_tokens: 1500,
+      // appelé à chaque tour en parallèle de /api/reply : raisonnement coupé (latence)
+      thinking: { type: "disabled" },
       system,
       output_config: { format: { type: "json_schema", schema: COACH_SCHEMA } },
       messages: [{ role: "user", content: prompt }],
@@ -660,6 +667,8 @@ Couvre les situations incontournables du contexte, du basique au plus élaboré,
     const message = await client.messages.create({
       model: MODEL,
       max_tokens: 6000,
+      // génération longue et rare : raisonnement adaptatif explicite (qualité)
+      thinking: { type: "adaptive" },
       system:
         "Tu es un professeur de langue orale pragmatique : tu fournis des structures de phrases directement réutilisables en conversation réelle, idiomatiques et naturelles, jamais scolaires.",
       output_config: { format: { type: "json_schema", schema: PHRASEBOOK_SCHEMA } },
@@ -724,6 +733,8 @@ Exemple du type attendu pour un pitch perso : Accroche → Mon rôle ("I'm [name
     const message = await client.messages.create({
       model: MODEL,
       max_tokens: 6000,
+      // génération longue et rare : raisonnement adaptatif explicite (qualité)
+      thinking: { type: "adaptive" },
       system:
         "Tu es un coach de prise de parole en langue étrangère : tu construis des trames de monologues réutilisables, naturelles à l'oral, avec des transitions fluides entre les parties.",
       output_config: { format: { type: "json_schema", schema: BLOCKS_SCHEMA } },
@@ -795,6 +806,8 @@ ${transcript.trim()}
     const message = await client.messages.create({
       model: MODEL,
       max_tokens: 3000,
+      // évaluation complexe (note, couverture partie par partie) : raisonnement adaptatif
+      thinking: { type: "adaptive" },
       system:
         "Tu es un coach de prise de parole exigeant et bienveillant, spécialiste des apprenants francophones. Tu évalues la récitation d'un monologue structuré : couverture des parties, langue, naturel. Tu t'appuies uniquement sur la transcription fournie.",
       output_config: { format: { type: "json_schema", schema: BLOCKEVAL_SCHEMA } },
@@ -875,6 +888,8 @@ La session doit piéger gentiment l'apprenant : le scénario et la mission le fo
     const message = await client.messages.create({
       model: MODEL,
       max_tokens: 2500,
+      // conception d'exercice ciblé (analyse des erreurs) : raisonnement adaptatif
+      thinking: { type: "adaptive" },
       system:
         "Tu es un professeur de langue expert en remédiation : tu conçois des exercices de conversation qui ciblent précisément les faiblesses d'un apprenant. Sois concret et malin dans le choix du scénario.",
       output_config: { format: { type: "json_schema", schema: DRILL_SCHEMA } },
