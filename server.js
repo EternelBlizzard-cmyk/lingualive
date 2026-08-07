@@ -38,6 +38,10 @@ function setApiKey(key) {
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
+// Contrôle de santé de l'hébergeur : volontairement hors de /api pour ne pas être
+// bloqué par le code d'accès (sinon Render conclut que l'appli est morte)
+app.get("/healthz", (req, res) => res.type("text").send("ok"));
+
 // Protection par code d'accès quand l'appli est exposée sur Internet (tunnel/hébergement).
 // Sans ACCESS_CODE dans l'environnement, tout passe (usage purement local).
 const ACCESS_CODE = (process.env.ACCESS_CODE || "").trim();

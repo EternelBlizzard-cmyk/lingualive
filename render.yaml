@@ -11,7 +11,7 @@ services:
     plan: free
     buildCommand: npm install
     startCommand: node server.js
-    healthCheckPath: /api/status
+    healthCheckPath: /healthz
     envVars:
       - key: ANTHROPIC_API_KEY
         sync: false
