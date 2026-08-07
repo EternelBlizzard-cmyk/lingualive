@@ -1,8 +1,9 @@
 # Blueprint Render — déploiement en un clic depuis le dépôt GitHub
 # Sur render.com : New + > Blueprint > sélectionner ce dépôt.
-# Renseigner ensuite les deux variables d'environnement (jamais commitées) :
-#   ANTHROPIC_API_KEY = sk-ant-…   (ta clé Claude)
-#   ACCESS_CODE       = ton code d'accès (le même que local, ou un autre)
+# Renseigner ensuite les variables d'environnement (jamais commitées) :
+#   ANTHROPIC_API_KEY = sk-ant-…  (obligatoire — le cerveau de l'appli)
+#   ACCESS_CODE       = ton code d'accès (obligatoire — protège l'appli et ta clé)
+#   OPENAI_API_KEY    = sk-…      (facultatif — voix premium, sinon voix Edge gratuites)
 services:
   - type: web
     name: lingualive
@@ -10,8 +11,11 @@ services:
     plan: free
     buildCommand: npm install
     startCommand: node server.js
+    healthCheckPath: /api/status
     envVars:
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: ACCESS_CODE
+        sync: false
+      - key: OPENAI_API_KEY
         sync: false
