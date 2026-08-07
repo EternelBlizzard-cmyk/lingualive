@@ -56,6 +56,10 @@ Toute erreur premium/TTS doit TOUJOURS retomber sur un repli fonctionnel — jam
 6. **Session de diagnostic dans le vrai Chrome** : remettre `wantListening=false`/`state.inSession=false` avant de quitter, sinon l'onglet vole le micro de l'utilisateur.
 7. **Variables PowerShell** : l'état du shell ne persiste PAS entre deux appels d'outil — tout test multi-étapes doit tenir dans une seule commande.
 8. **data.json** : contient les vraies données de progression synchronisées — ne jamais y écrire de données de test sans les supprimer ensuite.
+9. **UNE SEULE instance serveur** : plusieurs `node server.js` peuvent coexister (IPv4/IPv6, superviseurs lancés en double) ; l'ancienne instance garde le port avec des connexions HTTP mortes → les requêtes API pendent à l'infini (« réfléchit » sans fin) alors que `/api/status` répond. Symptôme : `Get-CimInstance Win32_Process -Filter "Name='node.exe'"` montre 2 processus d'âges différents. Remède : tuer TOUS les `node server.js` ET les `cmd server-loop`, puis relancer un seul superviseur. Le serveur sort maintenant seul sur EADDRINUSE, et le client Anthropic a `timeout: 60000, maxRetries: 2`.
+10. **Le micro ne doit jamais dépendre de l'audio** : `speak()` garantit l'appel de `onend` (garde-fou 6 s si rien ne démarre, puis durée réelle + 8 s). Sans ça, un audio bloqué (politique d'autoplay, TTS en panne) fige la conversation.
+11. **Tunnel quick Cloudflare = point faible connu** : URL différente à chaque relance (déjà 5), échecs de connexion en série côté Cloudflare. La PWA installée sur le téléphone meurt à chaque changement. Vraie solution : tunnel nommé (compte Cloudflare) ou hébergement Render — nécessite une action de l'utilisateur.
+12. **Tester dans le vrai Chrome** (claude-in-chrome) : `document.hidden` est true dans un onglet piloté → le micro refuse de démarrer ; surcharger `document.hidden`. Un clic programmatique n'est PAS un geste utilisateur → l'audio peut être bloqué (d'où l'importance du garde-fou). Instrumenter en enveloppant `speak`/`startListening` et en écoutant les événements de `recognition`, avec des marqueurs horodatés.
 
 ## Vérification type après une modif
 
