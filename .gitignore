@@ -7,3 +7,5 @@ server.log
 server-err.log
 # Données personnelles synchronisées (progression, vocabulaire...)
 data.json
+
+_diag.js
