@@ -470,6 +470,7 @@ let resumeTicker = null;
 let currentAudio = null;
 
 function stopAudio() {
+  clearTimeout(speakGuard);
   if (currentAudio) {
     currentAudio.onended = null;
     currentAudio.onerror = null;
@@ -485,8 +486,22 @@ function stopAudio() {
 // Voix serveur par défaut hors session, selon la langue d'étude
 const DEFAULT_TTS = { en: "en-US-AriaNeural", es: "es-ES-ElviraNeural", de: "de-DE-KatjaNeural", it: "it-IT-ElsaNeural" };
 
+let speakGuard = null;
+
 async function speak(text, onend) {
   stopAudio();
+  // La suite (réouverture du micro) ne doit JAMAIS dépendre du succès de l'audio :
+  // navigateur qui bloque la lecture, TTS en panne… la main est rendue quoi qu'il arrive
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    clearTimeout(speakGuard);
+    onend && onend();
+  };
+  clearTimeout(speakGuard);
+  speakGuard = setTimeout(finish, 6000); // rien n'a démarré → on rend la main
+
   try {
     const voice = (state.inSession && state.persona && store.get("personaAccent", true) && state.persona.ttsVoice)
       ? state.persona.ttsVoice
@@ -505,13 +520,17 @@ async function speak(text, onend) {
     audio.onended = () => {
       URL.revokeObjectURL(url);
       if (currentAudio === audio) currentAudio = null;
-      onend && onend();
+      finish();
     };
-    audio.onerror = () => { URL.revokeObjectURL(url); speakLocal(text, onend); };
+    audio.onerror = () => { URL.revokeObjectURL(url); speakLocal(text, finish); };
     await audio.play();
     setCallState("speaking", text);
+    // La lecture a démarré : le garde-fou couvre désormais la durée réelle
+    clearTimeout(speakGuard);
+    const secs = isFinite(audio.duration) && audio.duration ? audio.duration : Math.min(60, text.length / 12);
+    speakGuard = setTimeout(finish, secs * 1000 + 8000);
   } catch {
-    speakLocal(text, onend);
+    speakLocal(text, finish);
   }
 }
 

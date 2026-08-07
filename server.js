@@ -14,7 +14,10 @@ const PORT = process.env.PORT || 3100;
 const MODEL = process.env.LINGUALIVE_MODEL || "claude-sonnet-5";
 const MAX_HISTORY = 24; // tours conservés dans le contexte de conversation
 
-let client = new Anthropic();
+// timeout/maxRetries explicites : sans eux, une connexion morte fait pendre la
+// requête plusieurs minutes et l'appli reste bloquée sur « réfléchit »
+const CLIENT_OPTS = { timeout: 60000, maxRetries: 2 };
+let client = new Anthropic(CLIENT_OPTS);
 
 const ENV_PATH = path.join(__dirname, ".env");
 
@@ -28,7 +31,7 @@ function saveEnvVar(name, value) {
 }
 
 function setApiKey(key) {
-  client = new Anthropic({ apiKey: key });
+  client = new Anthropic({ ...CLIENT_OPTS, apiKey: key });
   saveEnvVar("ANTHROPIC_API_KEY", key);
 }
 
@@ -1124,6 +1127,15 @@ process.on("unhandledRejection", (err) => {
   ttsPool.clear();
 });
 
-app.listen(PORT, () => {
+// Une seule instance : si le port est déjà pris, on sort proprement au lieu de
+// laisser deux serveurs (dont un périmé) se disputer le port
+const server = app.listen(PORT, () => {
   console.log(`LinguaLive démarré : http://localhost:${PORT}`);
+});
+server.on("error", (err) => {
+  if (err.code === "EADDRINUSE") {
+    console.error(`Port ${PORT} déjà utilisé par une autre instance — arrêt.`);
+    process.exit(0);
+  }
+  throw err;
 });
