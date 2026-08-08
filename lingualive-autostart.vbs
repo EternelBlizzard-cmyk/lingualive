@@ -3,7 +3,7 @@
 ' Pour désactiver : supprimer cette copie.
 Dim shell, serverDir
 Set shell = CreateObject("WScript.Shell")
-serverDir = "C:\Users\jeffr\OneDrive\Documents\Claude\Projects\Edutrust\lingualive"
+serverDir = "C:\Users\jeffr\OneDrive\Documents\Claude\Projects\LinguaLive"
 
 ' Laisse OneDrive monter le dossier avant de lancer quoi que ce soit
 WScript.Sleep 45000

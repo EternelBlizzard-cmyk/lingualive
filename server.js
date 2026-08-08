@@ -1,9 +1,10 @@
 const path = require("path");
 const fs = require("fs");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
-// Réutilise la clé configurée pour SlideForge si aucune clé locale
+// Filet de sécurité : reprend la clé de SlideForge si `.env` n'en contient pas.
+// Depuis le 2026-08-08 LinguaLive a la sienne — ce repli ne devrait plus servir.
 if (!process.env.ANTHROPIC_API_KEY) {
-  require("dotenv").config({ path: path.join(__dirname, "..", "slideforge", ".env") });
+  require("dotenv").config({ path: path.join(__dirname, "..", "SlideForge", ".env") });
 }
 const express = require("express");
 const Anthropic = require("@anthropic-ai/sdk");

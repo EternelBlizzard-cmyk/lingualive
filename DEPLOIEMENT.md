@@ -30,7 +30,7 @@ Une fenêtre de connexion GitHub peut s'ouvrir sur ton écran : connecte-toi, c'
 3. Choisis le dépôt **lingualive** → Render lit tout seul le fichier de configuration
 4. Il demande 3 valeurs (elles restent secrètes chez Render, jamais dans le code) :
    - **ANTHROPIC_API_KEY** : ta clé Claude — elle est dans le fichier
-     `C:\Users\jeffr\OneDrive\Documents\Claude\Projects\Edutrust\slideforge\.env`
+     `C:\Users\jeffr\OneDrive\Documents\Claude\Projects\SlideForge\.env`
      (ouvre-le avec le Bloc-notes, copie ce qui suit `ANTHROPIC_API_KEY=`)
    - **ACCESS_CODE** : `279287` (le même code qu'aujourd'hui)
    - **OPENAI_API_KEY** : ta clé OpenAI si tu veux les voix premium, sinon laisse vide

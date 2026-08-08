@@ -2,6 +2,10 @@
 
 Coach de conversation orale multilingue (anglais/espagnol/allemand/italien) pour un apprenant francophone. Node/Express + API Anthropic, front vanilla JS servi depuis `public/`. **Tout est en localStorage côté client, synchronisé entre appareils via le serveur.** Pas de base de données, pas de framework, pas de build.
 
+**En ligne aussi sur Render** : https://lingualive.onrender.com — adresse définitive, installée sur le téléphone, distincte du couple serveur local + tunnel Cloudflare décrit ci-dessous (qui reste utile pour le développement). Variables sur Render : `ANTHROPIC_API_KEY`, `ACCESS_CODE`, `OPENAI_API_KEY` (optionnelle, voix premium non activées en ligne faute de crédit au dernier contrôle).
+
+**Projet indépendant** (`Projects\LinguaLive\`, sorti du dossier Edutrust le 2026-08-08 — aucun lien fonctionnel avec Edutrust ; le dossier s'appelait `lingualive`). ⚠️ `lingualive-autostart.vbs` contient le **chemin absolu** de ce dossier et une copie de ce fichier vit dans `shell:startup` : si le projet est déplacé, corriger les deux, sinon LinguaLive ne démarrera plus avec Windows.
+
 ## Démarrage & infrastructure (NE PAS CASSER)
 
 - **Port 3100 FIXE** : le tunnel mobile et la PWA installée pointent dessus. Ne jamais lancer de doublon ni changer le port. La preview Claude doit utiliser `preview_start {url: "http://localhost:3100"}` (pas de second serveur).
@@ -58,8 +62,9 @@ Toute erreur premium/TTS doit TOUJOURS retomber sur un repli fonctionnel — jam
 8. **data.json** : contient les vraies données de progression synchronisées — ne jamais y écrire de données de test sans les supprimer ensuite.
 9. **UNE SEULE instance serveur** : plusieurs `node server.js` peuvent coexister (IPv4/IPv6, superviseurs lancés en double) ; l'ancienne instance garde le port avec des connexions HTTP mortes → les requêtes API pendent à l'infini (« réfléchit » sans fin) alors que `/api/status` répond. Symptôme : `Get-CimInstance Win32_Process -Filter "Name='node.exe'"` montre 2 processus d'âges différents. Remède : tuer TOUS les `node server.js` ET les `cmd server-loop`, puis relancer un seul superviseur. Le serveur sort maintenant seul sur EADDRINUSE, et le client Anthropic a `timeout: 60000, maxRetries: 2`.
 10. **Le micro ne doit jamais dépendre de l'audio** : `speak()` garantit l'appel de `onend` (garde-fou 6 s si rien ne démarre, puis durée réelle + 8 s). Sans ça, un audio bloqué (politique d'autoplay, TTS en panne) fige la conversation.
-11. **Tunnel quick Cloudflare = point faible connu** : URL différente à chaque relance (déjà 5), échecs de connexion en série côté Cloudflare. La PWA installée sur le téléphone meurt à chaque changement. Vraie solution : tunnel nommé (compte Cloudflare) ou hébergement Render — nécessite une action de l'utilisateur.
-12. **Tester dans le vrai Chrome** (claude-in-chrome) : `document.hidden` est true dans un onglet piloté → le micro refuse de démarrer ; surcharger `document.hidden`. Un clic programmatique n'est PAS un geste utilisateur → l'audio peut être bloqué (d'où l'importance du garde-fou). Instrumenter en enveloppant `speak`/`startListening` et en écoutant les événements de `recognition`, avec des marqueurs horodatés.
+11. **Tunnel quick Cloudflare = point faible connu** : URL différente à chaque relance (déjà 5), échecs de connexion en série côté Cloudflare. La PWA installée sur le téléphone meurt à chaque changement. **Résolu pour l'usage quotidien** par le déploiement Render (adresse fixe, voir en tête de fichier) ; le tunnel reste utile pour développer et tester en local avant d'envoyer sur Render.
+12. **Render + code d'accès = déploiement qui échoue silencieusement** : Render sonde `/api/status` pour vérifier que le service est vivant, mais toutes les routes `/api/` exigent `ACCESS_CODE` dès que l'appel ne vient pas du PC local — Render reçoit un refus et déclare le déploiement mort alors que le serveur tourne. Solution posée : une route publique dédiée `/healthz` qui ne répond que « vivant », sans passer par la protection. Si un futur déploiement échoue avec un service qui semble pourtant démarrer, vérifier en premier que le health check de la plateforme d'hébergement ne tape pas sur une route protégée.
+13. **Tester dans le vrai Chrome** (claude-in-chrome) : `document.hidden` est true dans un onglet piloté → le micro refuse de démarrer ; surcharger `document.hidden`. Un clic programmatique n'est PAS un geste utilisateur → l'audio peut être bloqué (d'où l'importance du garde-fou). Instrumenter en enveloppant `speak`/`startListening` et en écoutant les événements de `recognition`, avec des marqueurs horodatés.
 
 ## Vérification type après une modif
 
@@ -74,3 +79,29 @@ Toute erreur premium/TTS doit TOUJOURS retomber sur un repli fonctionnel — jam
 - Interface et textes utilisateur : FRANÇAIS (tutoiement). Explications pédagogiques en français, contenus de conversation dans la langue cible.
 - Commentaires de code : français, sobres, seulement pour les contraintes non évidentes.
 - L'utilisateur (Jeffrey) n'est pas développeur : les réponses de chat expliquent le « quoi » et le « pourquoi » simplement, sans jargon inutile.
+
+## Discipline de coût
+
+Jeffrey finance les crédits API lui-même ; la maîtrise du coût fait partie du travail.
+Appliquer ces règles d'office, sans qu'il ait à le demander (section absente jusqu'au
+2026-08-08, remontée du modèle `Projects\_modele\` — LinguaLive en manquait entièrement).
+
+- **Modèle** : Sonnet 5 suffit pour implémenter un plan décidé, corriger un détail, mettre à
+  jour la doc. Réserver Fable/Opus (5× le prix) à la conception et au débogage retors. Le
+  signaler en une phrase quand on bascule — ne jamais changer de modèle soi-même, c'est sa
+  décision et sa facture. Ne pas recommander `/fast` pour économiser : le mode rapide se paie
+  au prix fort.
+- **`/clear`** : le proposer une fois un chantier terminé et testé. Toute la conversation est
+  relue à chaque échange — le 50ᵉ message coûte bien plus que le 5ᵉ. Tenir ce fichier à jour
+  est ce qui rend le `/clear` sans douleur.
+- **Captures d'écran** : seulement sur demande ou pour juger un rendu visuel — jamais en
+  routine (vérifier par `get_page_text`, `read_page` ou une évaluation JS, quasi gratuit ;
+  la preview étant instable sur ce projet, préférer les appels HTTP directs, cf. piège 5).
+- **Lire les fichiers avec parcimonie** : Grep pour localiser avant de lire, la partie utile
+  plutôt que tout le fichier, ne jamais relire un fichier qu'on vient d'éditer.
+- **Ce qui ne fait PAS économiser — ne pas le suggérer** : demander à Jeffrey d'être plus bref
+  (une consigne vague coûte *plus* cher : exploration, questions, allers-retours — ses
+  messages qui posent tout le contexte d'un coup sont le format le plus économique,
+  l'encourager) ; sauter les tests (un bug trouvé plus tard coûte une session de débogage
+  entière — vu les pièges déjà payés cher sur ce projet, particulièrement vrai ici) ; découper
+  une tâche en petits messages successifs.

@@ -26,7 +26,7 @@ Dans les deux cas, le **code d'accès** te sera demandé une seule fois au premi
 1. Crée un compte sur https://github.com (si pas déjà fait) et https://render.com (connexion via GitHub possible)
 2. Crée un dépôt **privé** `lingualive` sur GitHub, puis pousse le code (le dépôt git local est déjà prêt) :
    ```
-   cd "C:\Users\jeffr\OneDrive\Documents\Claude\Projects\Edutrust\lingualive"
+   cd "C:\Users\jeffr\OneDrive\Documents\Claude\Projects\LinguaLive"
    git remote add origin https://github.com/TON-PSEUDO/lingualive.git
    git push -u origin master
    ```
