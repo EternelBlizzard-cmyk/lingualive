@@ -10,6 +10,7 @@
 </head>
 <body>
   <header class="topbar">
+    <span class="lang-chip" id="langChip" title="Langue en cours d'apprentissage"></span>
     <div class="brand">🎙️ <span>Lingua<em>Live</em></span></div>
     <nav class="tabs" id="mainTabs">
       <button class="tab active" data-view="talk"><span class="tab-ico">💬</span><span class="tab-txt">Parler</span></button>
@@ -18,6 +19,9 @@
       <button class="tab" data-view="vocab"><span class="tab-ico">📚</span><span class="tab-txt">Vocabulaire</span> <span class="badge" id="vocabDueBadge" hidden></span></button>
       <button class="tab" data-view="progress"><span class="tab-ico">📈</span><span class="tab-txt">Progrès</span></button>
       <button class="tab" data-view="errors"><span class="tab-ico">🩹</span><span class="tab-txt">Mes erreurs</span></button>
+      <!-- Visible seulement sur mobile. Volontairement SANS la classe "tab" :
+           le gestionnaire de #mainTabs filtre sur closest(".tab") et l ignore donc. -->
+      <button class="tab-more" id="moreTab" title="Plus"><span class="tab-ico">⋯</span><span class="tab-txt">Plus</span></button>
     </nav>
     <div class="topbar-right">
       <span class="icon-btn" id="syncChip" title="Synchronisation PC ↔ téléphone">☁️</span>
@@ -152,6 +156,23 @@
     <div class="modal debrief">
       <div id="debriefContent"></div>
       <button class="cta" id="debriefCloseBtn">Continuer</button>
+    </div>
+  </div>
+
+  <!-- ═══════════ MENU « PLUS » (barre du bas, mobile) ═══════════ -->
+  <div class="more-sheet" id="moreSheet" hidden>
+    <button data-view="phrases"><span>📖</span> Phrases</button>
+    <button data-view="progress"><span>📈</span> Progrès</button>
+    <button data-view="errors"><span>🩹</span> Mes erreurs</button>
+  </div>
+
+  <!-- ═══════════ ÉCRAN DE BIENVENUE (premier lancement seulement) ═══════════ -->
+  <div id="welcomeOverlay" hidden>
+    <div class="wel-inner">
+      <div class="wel-logo">🎙️</div>
+      <h1><span>Bienvenue sur</span><br>LinguaLive</h1>
+      <p>Apprends une langue par de vraies conversations — quand tu veux, où tu veux.</p>
+      <button class="cta" id="welcomeStartBtn">Commencer</button>
     </div>
   </div>
 

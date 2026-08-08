@@ -919,6 +919,12 @@ function show(view) {
   if (view === "vocab") renderVocab();
   if (view === "progress") renderProgress();
   if (view === "errors") renderErrors();
+  // Barre mobile : le bouton « Plus » s'allume quand une de ses trois vues est ouverte,
+  // et le menu se referme des qu'on change d'ecran.
+  const moreBtn = document.getElementById("moreTab");
+  if (moreBtn) moreBtn.classList.toggle("active", ["phrases", "progress", "errors"].includes(view));
+  const sheet = document.getElementById("moreSheet");
+  if (sheet) sheet.hidden = true;
 }
 
 document.getElementById("mainTabs").addEventListener("click", (e) => {
@@ -929,6 +935,36 @@ document.getElementById("mainTabs").addEventListener("click", (e) => {
   else show(v);
 });
 
+/* ── Menu « Plus » de la barre du bas (mobile) ──
+   Les trois vues qui ne tiennent pas dans la barre à quatre entrées. */
+const moreTabBtn = document.getElementById("moreTab");
+const moreSheetEl = document.getElementById("moreSheet");
+moreTabBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  moreSheetEl.hidden = !moreSheetEl.hidden;
+});
+moreSheetEl.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-view]");
+  if (!b) return;
+  show(b.dataset.view); // show() referme le menu
+});
+// Un clic n'importe où ailleurs referme le menu
+document.addEventListener("click", (e) => {
+  if (!moreSheetEl.hidden && !moreSheetEl.contains(e.target) && !moreTabBtn.contains(e.target)) {
+    moreSheetEl.hidden = true;
+  }
+});
+
+/* ── Écran de bienvenue, au tout premier lancement ──
+   Clé volontairement hors du préfixe lingualive_ : propre à l'appareil,
+   elle ne doit pas partir dans la synchronisation. */
+const welcomeEl = document.getElementById("welcomeOverlay");
+if (!localStorage.getItem("ll_welcome_seen")) welcomeEl.hidden = false;
+document.getElementById("welcomeStartBtn").addEventListener("click", () => {
+  localStorage.setItem("ll_welcome_seen", "1");
+  welcomeEl.hidden = true;
+});
+
 /* ═══════════════ Écran de configuration ═══════════════ */
 
 function renderSetup() {
@@ -937,6 +973,9 @@ function renderSetup() {
     <button class="level-pill ${code === state.lang ? "active" : ""}" data-lang="${code}">
       <strong>${l.flag}</strong><span>${l.label}</span>
     </button>`).join("");
+  // Pastille de langue en haut a gauche (reference : le drapeau au-dessus de l'accueil)
+  const chip = document.getElementById("langChip");
+  if (chip) chip.textContent = LANGS[state.lang].flag;
   const grid = document.getElementById("scenarioGrid");
   grid.innerHTML = SCENARIOS.map((s) => `
     <button class="scenario-card ${s.id === state.scenario.id ? "active" : ""}" data-id="${s.id}">
