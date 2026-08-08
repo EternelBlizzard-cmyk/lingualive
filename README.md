@@ -22,7 +22,7 @@ npm install
 npm start          # http://localhost:3100
 ```
 
-La clé API Anthropic est lue depuis `.env` (`ANTHROPIC_API_KEY=sk-ant-…`) ; à défaut, celle de `../slideforge/.env` est réutilisée automatiquement. Elle peut aussi être saisie via ⚙️ dans l'interface.
+La clé API Anthropic est lue depuis `.env` (`ANTHROPIC_API_KEY=sk-ant-…`) ; à défaut, celle de `../SlideForge/.env` est réutilisée automatiquement. Elle peut aussi être saisie via ⚙️ dans l'interface.
 
 ## Notes techniques
 

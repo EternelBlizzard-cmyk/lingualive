@@ -32,14 +32,16 @@ Une fenêtre de connexion GitHub peut s'ouvrir sur ton écran : connecte-toi, c'
    - **ANTHROPIC_API_KEY** : ta clé Claude — elle est dans le fichier
      `C:\Users\jeffr\OneDrive\Documents\Claude\Projects\SlideForge\.env`
      (ouvre-le avec le Bloc-notes, copie ce qui suit `ANTHROPIC_API_KEY=`)
-   - **ACCESS_CODE** : `279287` (le même code qu'aujourd'hui)
+   - **ACCESS_CODE** : ton code d'accès — il est dans le fichier `.env` du projet,
+     ligne `ACCESS_CODE=` (ce fichier n'est jamais envoyé sur GitHub).
+     ⚠️ Ne jamais écrire ce code dans un fichier suivi par git : le dépôt est public.
    - **OPENAI_API_KEY** : ta clé OpenAI si tu veux les voix premium, sinon laisse vide
 5. Clique **Apply** / **Deploy** et attends ~3 minutes
 6. Render affiche ton adresse définitive, du type **`https://lingualive-xxxx.onrender.com`**
 
 ### Étape 5 — Installer sur le téléphone (dernière fois !)
 1. Ouvre cette adresse sur le téléphone (Chrome ou Safari)
-2. Saisis le code d'accès `279287` au premier échange
+2. Saisis le code d'accès au premier échange
 3. Menu ⋮ → **« Ajouter à l'écran d'accueil »**
 4. Supprime les anciennes icônes LinguaLive
 
